@@ -1,0 +1,10 @@
+name: agentId
+in: path
+required: true
+description: Unique identifier of the agent
+schema:
+  type: string
+  pattern: '^[a-zA-Z0-9\-_]+$'
+  minLength: 1
+  maxLength: 64
+  example: "agent-alpha"

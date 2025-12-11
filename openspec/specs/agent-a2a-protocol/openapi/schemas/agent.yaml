@@ -1,0 +1,52 @@
+type: object
+required:
+  - id
+  - name
+  - status
+properties:
+  id:
+    type: string
+    description: Unique agent identifier
+    example: "agent-alpha"
+  name:
+    type: string
+    description: Human-readable agent name
+    example: "Alpha Agent"
+  description:
+    type: string
+    description: Optional description of agent's purpose
+    example: "Handles calculation tasks"
+  status:
+    type: string
+    description: Current agent status
+    enum:
+      - online
+      - offline
+      - busy
+      - error
+    example: "online"
+  capabilities:
+    type: array
+    description: List of capabilities this agent provides
+    items:
+      type: string
+    example:
+      - "calculation"
+      - "data-fetch"
+  metadata:
+    type: object
+    description: Additional agent-specific metadata
+    additionalProperties: true
+    example:
+      version: "2.1.0"
+      language: "rust"
+  lastSeen:
+    type: string
+    format: date-time
+    description: When the agent was last active
+    example: "2025-01-15T10:25:00Z"
+  endpoint:
+    type: string
+    format: uri
+    description: Network endpoint where agent can be reached
+    example: "https://agent-alpha.constellation.example.com"

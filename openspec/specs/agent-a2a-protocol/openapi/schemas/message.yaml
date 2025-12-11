@@ -1,0 +1,61 @@
+type: object
+required:
+  - id
+  - sender
+  - recipient
+  - type
+  - payload
+  - timestamp
+properties:
+  id:
+    type: string
+    format: uuid
+    description: Unique message identifier
+    example: "123e4567-e89b-12d3-a456-426614174000"
+  sender:
+    type: string
+    description: Sender agent identifier
+    example: "agent-alpha"
+  recipient:
+    type: string
+    description: Recipient agent identifier
+    example: "agent-beta"
+  type:
+    type: string
+    description: Message type for routing and processing
+    enum:
+      - command
+      - query
+      - event
+      - response
+    example: "command"
+  payload:
+    type: object
+    description: Message content (schema depends on type)
+    additionalProperties: true
+    example:
+      action: "calculate"
+      parameters:
+        x: 42
+        y: 100
+  timestamp:
+    type: string
+    format: date-time
+    description: When the message was created
+    example: "2025-01-15T10:30:00Z"
+  correlationId:
+    type: string
+    format: uuid
+    description: Optional correlation identifier for request/response tracking
+    example: "456e7890-f12a-34b5-c678-426614174001"
+  priority:
+    type: integer
+    minimum: 0
+    maximum: 10
+    default: 5
+    description: Message priority (0=lowest, 10=highest)
+  ttl:
+    type: integer
+    minimum: 0
+    description: Time-to-live in seconds (0=infinite)
+    example: 3600

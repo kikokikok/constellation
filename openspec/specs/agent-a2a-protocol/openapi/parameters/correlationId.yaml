@@ -1,0 +1,8 @@
+name: correlationId
+in: header
+required: false
+description: Correlation identifier for request tracing
+schema:
+  type: string
+  format: uuid
+  example: "456e7890-f12a-34b5-c678-426614174001"

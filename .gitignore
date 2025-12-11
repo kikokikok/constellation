@@ -1,0 +1,39 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Coverage
+coverage/
+*.profraw
+
+# Binaries (unless they're part of the project structure)
+**/*.exe
+**/*.dll
+
+# Project specific
+.secrets/
+credentials.json
+config.local.*

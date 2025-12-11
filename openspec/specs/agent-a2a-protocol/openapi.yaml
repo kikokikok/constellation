@@ -1,0 +1,74 @@
+openapi: 3.0.0
+info:
+  title: Agent A2A Protocol
+  description: |
+    OpenAPI specification for the Agent-to-Agent (A2A) Protocol.
+    This defines the communication interface between agents in the Constellation multi-agent system.
+  version: 1.0.0-alpha
+  contact:
+    name: Constellation Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.constellation.example.com/v1
+    description: Production API server
+  - url: http://localhost:8080/v1
+    description: Local development server
+
+paths:
+  /agents/{agentId}/messages:
+    $ref: './openapi/paths/agents-messages.yaml'
+
+components:
+  schemas:
+    Message:
+      $ref: './openapi/schemas/message.yaml'
+    Agent:
+      $ref: './openapi/schemas/agent.yaml'
+    Error:
+      $ref: './openapi/schemas/error.yaml'
+  parameters:
+    AgentId:
+      $ref: './openapi/parameters/agentId.yaml'
+    CorrelationId:
+      $ref: './openapi/parameters/correlationId.yaml'
+  responses:
+    MessageAccepted:
+      description: Message was accepted for delivery
+      content:
+        application/json:
+          schema:
+            $ref: './openapi/schemas/messageAck.yaml'
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: './openapi/schemas/error.yaml'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: './openapi/schemas/error.yaml'
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+securitySchemes:
+  BearerAuth:
+    type: http
+    scheme: bearer
+    bearerFormat: JWT
+  ApiKeyAuth:
+    type: apiKey
+    in: header
+    name: X-API-Key
+
+tags:
+  - name: Agents
+    description: Agent management and communication
+  - name: Messages
+    description: Message exchange operations
