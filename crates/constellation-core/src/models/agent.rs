@@ -60,18 +60,33 @@ impl Agent {
     }
 
     /// Activate the agent.
-    pub fn activate(&mut self) {
+    /// Returns `Ok(())` if successful, or `Err` if the agent is terminated.
+    pub fn activate(&mut self) -> Result<(), &'static str> {
+        if self.status == AgentStatus::Terminated {
+            return Err("Cannot activate a terminated agent");
+        }
         self.status = AgentStatus::Active;
+        Ok(())
     }
 
     /// Deactivate the agent (set to idle).
-    pub fn deactivate(&mut self) {
+    /// Returns `Ok(())` if successful, or `Err` if the agent is terminated.
+    pub fn deactivate(&mut self) -> Result<(), &'static str> {
+        if self.status == AgentStatus::Terminated {
+            return Err("Cannot deactivate a terminated agent");
+        }
         self.status = AgentStatus::Idle;
+        Ok(())
     }
 
     /// Terminate the agent.
-    pub fn terminate(&mut self) {
+    /// Returns `Ok(())` if successful, or `Err` if the agent is already terminated.
+    pub fn terminate(&mut self) -> Result<(), &'static str> {
+        if self.status == AgentStatus::Terminated {
+            return Err("Agent is already terminated");
+        }
         self.status = AgentStatus::Terminated;
+        Ok(())
     }
 }
 
@@ -94,13 +109,58 @@ mod tests {
     fn test_agent_status_transitions() {
         let mut agent = Agent::new(AgentRole::Architect, vec![]);
 
-        agent.activate();
+        assert!(agent.activate().is_ok());
         assert_eq!(agent.status, AgentStatus::Active);
 
-        agent.deactivate();
+        assert!(agent.deactivate().is_ok());
         assert_eq!(agent.status, AgentStatus::Idle);
 
-        agent.terminate();
+        assert!(agent.terminate().is_ok());
+        assert_eq!(agent.status, AgentStatus::Terminated);
+    }
+
+    #[test]
+    fn test_terminated_agent_cannot_be_activated() {
+        let mut agent = Agent::new(AgentRole::Engineer, vec![]);
+
+        // Terminate the agent
+        assert!(agent.terminate().is_ok());
+        assert_eq!(agent.status, AgentStatus::Terminated);
+
+        // Attempt to activate should fail
+        let result = agent.activate();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Cannot activate a terminated agent");
+        assert_eq!(agent.status, AgentStatus::Terminated);
+    }
+
+    #[test]
+    fn test_terminated_agent_cannot_be_deactivated() {
+        let mut agent = Agent::new(AgentRole::Engineer, vec![]);
+
+        // Terminate the agent
+        assert!(agent.terminate().is_ok());
+        assert_eq!(agent.status, AgentStatus::Terminated);
+
+        // Attempt to deactivate should fail
+        let result = agent.deactivate();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Cannot deactivate a terminated agent");
+        assert_eq!(agent.status, AgentStatus::Terminated);
+    }
+
+    #[test]
+    fn test_terminated_agent_cannot_be_reterminated() {
+        let mut agent = Agent::new(AgentRole::Engineer, vec![]);
+
+        // Terminate the agent
+        assert!(agent.terminate().is_ok());
+        assert_eq!(agent.status, AgentStatus::Terminated);
+
+        // Attempt to terminate again should fail
+        let result = agent.terminate();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Agent is already terminated");
         assert_eq!(agent.status, AgentStatus::Terminated);
     }
 
@@ -130,10 +190,16 @@ mod tests {
 
         let agent: Agent = serde_json::from_str(json).unwrap();
 
-        assert_eq!(agent.id, uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap());
+        assert_eq!(
+            agent.id,
+            uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap()
+        );
         assert_eq!(agent.role, AgentRole::Cfo);
         assert_eq!(agent.status, AgentStatus::Idle);
-        assert_eq!(agent.capabilities, vec!["budget".to_string(), "allocate".to_string()]);
+        assert_eq!(
+            agent.capabilities,
+            vec!["budget".to_string(), "allocate".to_string()]
+        );
     }
 
     #[test]
