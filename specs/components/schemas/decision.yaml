@@ -1,0 +1,31 @@
+Decision:
+  type: object
+  required:
+    - id
+    - agentId
+    - timestamp
+    - outcome
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique decision identifier
+    agentId:
+      type: string
+      format: uuid
+      description: ID of the agent making the decision
+    timestamp:
+      type: string
+      format: date-time
+      description: When the decision was made
+    outcome:
+      type: string
+      enum: [approved, rejected, pending, escalated]
+      description: The decision outcome
+    rationale:
+      type: string
+      description: Explanation for the decision
+    metadata:
+      type: object
+      additionalProperties: true
+      description: Additional decision context

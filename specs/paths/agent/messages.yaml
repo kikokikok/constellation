@@ -1,0 +1,38 @@
+post:
+  summary: Send a message to an agent
+  description: Send a message using the A2A protocol.
+  operationId: sendAgentMessage
+  tags:
+    - agent
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - sender
+            - recipient
+            - payload
+          properties:
+            sender:
+              type: string
+              format: uuid
+              description: Sender agent ID
+            recipient:
+              type: string
+              format: uuid
+              description: Recipient agent ID
+            payload:
+              type: object
+              additionalProperties: true
+              description: Message content
+  responses:
+    '202':
+      description: Message accepted for delivery
+    '400':
+      description: Invalid message
+    '404':
+      description: Agent not found
+    '500':
+      description: Internal server error
