@@ -1,0 +1,2 @@
+Agent:
+  $ref: "../../openspec/specs/agent-a2a-protocol/openapi/schemas/agent.yaml"

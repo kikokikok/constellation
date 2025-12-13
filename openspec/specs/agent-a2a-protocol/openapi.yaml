@@ -52,20 +52,19 @@ components:
         application/json:
           schema:
             $ref: './openapi/schemas/error.yaml'
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
 
 security:
   - BearerAuth: []
   - ApiKeyAuth: []
-
-securitySchemes:
-  BearerAuth:
-    type: http
-    scheme: bearer
-    bearerFormat: JWT
-  ApiKeyAuth:
-    type: apiKey
-    in: header
-    name: X-API-Key
 
 tags:
   - name: Agents

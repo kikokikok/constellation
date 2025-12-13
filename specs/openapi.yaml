@@ -1,0 +1,29 @@
+openapi: 3.1.0
+info:
+  title: Constellation Multi-Agent Platform API
+  version: 0.1.0-alpha
+  description: API specification for the Constellation agentic platform.
+servers:
+  - url: http://localhost:8080/v1
+    description: Local development server
+paths:
+  # Orchestrator endpoints
+  /orchestrator/agents:
+    $ref: './paths/orchestrator/agents.yaml'
+  # Memory endpoints
+  /memory/vectors:
+    $ref: './paths/memory/vectors.yaml'
+  # Agent endpoints
+  /agent/messages:
+    $ref: './paths/agent/messages.yaml'
+components:
+  schemas:
+    Agent:
+      $ref: './components/schemas/agent.yaml'
+    Decision:
+      $ref: './components/schemas/decision.yaml'
+    Budget:
+      $ref: './components/schemas/budget.yaml'
+  parameters: {}
+  responses: {}
+  securitySchemes: {}
