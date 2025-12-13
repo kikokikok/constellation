@@ -1,24 +1,2 @@
 Agent:
-  type: object
-  required:
-    - id
-    - role
-    - status
-  properties:
-    id:
-      type: string
-      format: uuid
-      description: Unique agent identifier
-    role:
-      type: string
-      enum: [ceo, cfo, architect, engineer, devops, qa, spec_manager, github_automation]
-      description: The agent's functional role
-    status:
-      type: string
-      enum: [idle, active, terminated]
-      description: Current runtime status
-    capabilities:
-      type: array
-      items:
-        type: string
-      description: List of actions this agent can perform
+  $ref: "../../openspec/specs/agent-a2a-protocol/openapi/schemas/agent.yaml"

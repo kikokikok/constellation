@@ -2,51 +2,302 @@ type: object
 required:
   - id
   - name
-  - status
+  - description
+  - protocolVersion
+  - version
+  - defaultInputModes
+  - defaultOutputModes
+  - skills
+  - capabilities
+  - supportedInterfaces
 properties:
   id:
     type: string
-    description: Unique agent identifier
+    description: Unique identifier for the agent
     example: "agent-alpha"
   name:
     type: string
-    description: Human-readable agent name
+    description: Human-readable name of the agent
     example: "Alpha Agent"
   description:
     type: string
-    description: Optional description of agent's purpose
-    example: "Handles calculation tasks"
-  status:
+    description: What the agent does
+    example: "Handles calculation tasks for the Constellation platform"
+  protocolVersion:
     type: string
-    description: Current agent status
-    enum:
-      - online
-      - offline
-      - busy
-      - error
-    example: "online"
-  capabilities:
+    description: The version of the A2A protocol this agent supports
+    default: "1.0"
+    example: "1.0"
+  version:
+    type: string
+    description: The version of the agent
+    example: "1.0.0"
+  defaultInputModes:
     type: array
-    description: List of capabilities this agent provides
+    description: The set of interaction modes that the agent supports across all skills, defined as media types
     items:
       type: string
     example:
-      - "calculation"
-      - "data-fetch"
-  metadata:
-    type: object
-    description: Additional agent-specific metadata
-    additionalProperties: true
+      - "text/plain"
+      - "application/json"
+  defaultOutputModes:
+    type: array
+    description: The media types supported as outputs from this agent
+    items:
+      type: string
     example:
-      version: "2.1.0"
-      language: "rust"
-  lastSeen:
-    type: string
-    format: date-time
-    description: When the agent was last active
-    example: "2025-01-15T10:25:00Z"
-  endpoint:
+      - "text/plain"
+      - "application/json"
+  provider:
+    type: object
+    description: Information about the organization/developer providing the agent
+    required:
+      - name
+    properties:
+      name:
+        type: string
+        description: Name of the organization or developer
+        example: "Constellation Team"
+      url:
+        type: string
+        format: uri
+        description: URL to the provider's website
+        example: "https://constellation.example.com"
+      contact:
+        type: object
+        description: Contact information
+        properties:
+          email:
+            type: string
+            format: email
+            description: Contact email address
+            example: "team@constellation.example.com"
+  capabilities:
+    type: object
+    description: Declared capabilities of the agent
+    properties:
+      streaming:
+        type: boolean
+        description: Whether the agent supports streaming responses
+        default: false
+      pushNotifications:
+        type: boolean
+        description: Whether the agent supports push notifications
+        default: false
+      extensions:
+        type: array
+        description: List of protocol extensions supported by the agent
+        items:
+          type: object
+          properties:
+            uri:
+              type: string
+              description: The unique URI identifying the extension
+            description:
+              type: string
+              description: A human-readable description of how this agent uses the extension
+            required:
+              type: boolean
+              description: If true, the client must understand and comply with the extension's requirements
+            params:
+              type: object
+              description: Optional, extension-specific configuration parameters
+              additionalProperties: true
+        example:
+          - uri: "https://constellation.example.com/extensions/v1"
+            description: "Constellation platform extensions"
+            required: false
+      stateTransitionHistory:
+        type: boolean
+        description: Indicates if the agent provides a history of state transitions for a task
+        default: false
+  skills:
+    type: array
+    description: Specific tasks the agent can perform
+    items:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - tags
+      properties:
+        id:
+          type: string
+          description: A unique identifier for the agent's skill
+        name:
+          type: string
+          description: A human-readable name for the skill
+        description:
+          type: string
+          description: A detailed description of the skill
+        tags:
+          type: array
+          description: A set of keywords describing the skill's capabilities
+          items:
+            type: string
+        examples:
+          type: array
+          description: Example prompts or scenarios that this skill can handle
+          items:
+            type: string
+        inputModes:
+          type: array
+          description: The set of supported input media types for this skill, overriding the agent's defaults
+          items:
+            type: string
+        outputModes:
+          type: array
+          description: The set of supported output media types for this skill, overriding the agent's defaults
+          items:
+            type: string
+        security:
+          type: array
+          description: Security schemes necessary for this skill
+          items:
+            type: object
+    example:
+      - id: "calculation"
+        name: "Calculation"
+        description: "Performs mathematical calculations and data analysis"
+        tags: ["math", "analysis", "calculation"]
+        examples: ["Calculate the sum of 2 + 2", "Analyze this dataset"]
+  supportedInterfaces:
+    type: array
+    description: Ordered list of supported interfaces. First entry is preferred.
+    items:
+      type: object
+      required:
+        - url
+        - protocolBinding
+      properties:
+        url:
+          type: string
+          format: uri
+          description: The URL where this interface is available
+        protocolBinding:
+          type: string
+          description: The protocol binding supported at this URL
+          enum: [JSONRPC, GRPC, HTTP+JSON]
+        tenant:
+          type: string
+          description: Tenant to be set in the request when calling the agent
+    example:
+      - url: "https://agent-alpha.constellation.example.com/a2a/v1"
+        protocolBinding: "HTTP+JSON"
+  securitySchemes:
+    type: object
+    description: The security scheme details used for authenticating with this agent
+    additionalProperties:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [apiKey, http, oauth2, openIdConnect, mutualTls]
+        description:
+          type: string
+        # Additional properties based on type
+        location:
+          type: string
+          enum: [query, header, cookie]
+        name:
+          type: string
+        scheme:
+          type: string
+        bearerFormat:
+          type: string
+        flows:
+          type: object
+        openIdConnectUrl:
+          type: string
+          format: uri
+    example:
+      bearer:
+        type: "http"
+        scheme: "bearer"
+        bearerFormat: "JWT"
+  security:
+    type: array
+    description: Security requirements for contacting the agent
+    items:
+      type: object
+      additionalProperties:
+        type: array
+        items:
+          type: string
+    example:
+      - bearer: []
+  documentationUrl:
     type: string
     format: uri
-    description: Network endpoint where agent can be reached
-    example: "https://agent-alpha.constellation.example.com"
+    description: A url to provide additional documentation about the agent
+    example: "https://docs.constellation.example.com/agents/alpha"
+  supportsExtendedAgentCard:
+    type: boolean
+    description: Whether the agent supports providing an extended agent card when authenticated
+    default: false
+  iconUrl:
+    type: string
+    format: uri
+    description: An optional URL to an icon for the agent
+    example: "https://constellation.example.com/icons/agent-alpha.png"
+  signatures:
+    type: array
+    description: JSON Web Signatures computed for this AgentCard
+    items:
+      type: object
+      required:
+        - protected
+        - signature
+      properties:
+        protected:
+          type: string
+          description: The protected JWS header for the signature. This is always a base64url-encoded JSON object.
+        signature:
+          type: string
+          description: The computed signature, base64url-encoded.
+        header:
+          type: object
+          description: The unprotected JWS header values.
+          additionalProperties: true
+  metadata:
+    type: object
+    description: Flexible key-value map for additional context
+    properties:
+      constellation:
+        type: object
+        description: Constellation platform extensions
+        properties:
+          role:
+            type: string
+            description: The agent's functional role in Constellation
+            enum: [ceo, cfo, architect, engineer, devops, qa, spec_manager, github_automation]
+          internalStatus:
+            type: string
+            description: Internal execution status
+            enum: [idle, active, terminated]
+          capabilities:
+            type: array
+            description: Internal capabilities list
+            items:
+              type: string
+          lastSeen:
+            type: string
+            format: date-time
+            description: When the agent was last active internally
+    additionalProperties: true
+    example:
+      constellation:
+        role: "engineer"
+        internalStatus: "active"
+        capabilities: ["rust-development", "system-design"]
+        lastSeen: "2025-01-15T10:25:00Z"
+      version: "2.1.0"
+      language: "rust"
+  extensions:
+    type: array
+    description: List of required extensions
+    items:
+      type: string
+    example:
+      - "constellation.v1"

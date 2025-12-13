@@ -1,92 +1,225 @@
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use serde_json;
 
-/// Agent role in the Constellation system.
+/// A2A Protocol Binding types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentRole {
-    /// Chief Executive Officer - final arbitrator for strategic decisions.
-    Ceo,
-    /// Chief Financial Officer - manages budget pool and evaluates ROI.
-    Cfo,
-    /// System Architect - designs architecture and data flows.
-    Architect,
-    /// Engineer - implements performance-critical Rust code.
-    Engineer,
-    /// DevOps Engineer - manages containerization and deployment.
-    Devops,
-    /// Quality Assurance - creates test suites and validates system integrity.
-    Qa,
-    /// Specification Manager - maintains OpenSpec as source of truth.
-    SpecManager,
-    /// GitHub Automation - automates GitHub workflows and project management.
-    GithubAutomation,
+#[serde(rename_all = "UPPERCASE")]
+pub enum ProtocolBinding {
+    /// JSON-RPC protocol binding
+    #[serde(rename = "JSONRPC")]
+    JsonRpc,
+    /// gRPC protocol binding
+    Grpc,
+    /// HTTP+JSON protocol binding
+    #[serde(rename = "HTTP+JSON")]
+    HttpJson,
 }
 
-/// Current runtime status of an agent.
+/// Security scheme types for A2A authentication
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum AgentStatus {
-    /// Agent is available but not currently executing tasks.
-    Idle,
-    /// Agent is currently executing tasks.
-    Active,
-    /// Agent has been terminated and cannot be reactivated.
-    Terminated,
+pub enum SecuritySchemeType {
+    /// API Key security scheme
+    ApiKey,
+    /// HTTP authentication scheme
+    Http,
+    /// OAuth2 security scheme
+    Oauth2,
+    /// OpenID Connect security scheme
+    OpenIdConnect,
+    /// Mutual TLS security scheme
+    MutualTls,
 }
 
-/// Core agent entity representing a participant in the Constellation system.
+/// Agent skill representing a specific task the agent can perform
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentSkill {
+    /// Unique identifier for the skill
+    pub id: String,
+    /// Human-readable name for the skill
+    pub name: String,
+    /// Detailed description of the skill
+    pub description: String,
+    /// Keywords describing the skill's capabilities
+    pub tags: Vec<String>,
+    /// Example prompts or scenarios
+    pub examples: Option<Vec<String>>,
+    /// Supported input media types for this skill
+    pub input_modes: Option<Vec<String>>,
+    /// Supported output media types for this skill
+    pub output_modes: Option<Vec<String>>,
+}
+
+/// Supported interface for agent communication
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentInterface {
+    /// URL where this interface is available
+    pub url: String,
+    /// Protocol binding supported at this URL
+    pub protocol_binding: ProtocolBinding,
+    /// Tenant to be set in the request when calling the agent
+    pub tenant: Option<String>,
+}
+
+/// Agent capabilities declaration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AgentCapabilities {
+    /// Whether the agent supports streaming responses
+    pub streaming: Option<bool>,
+    /// Whether the agent supports push notifications
+    pub push_notifications: Option<bool>,
+    /// Whether the agent provides state transition history
+    pub state_transition_history: Option<bool>,
+}
+
+/// Provider information for the agent
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentProvider {
+    /// Name of the organization or developer
+    pub name: String,
+    /// URL to the provider's website
+    pub url: Option<String>,
+    /// Contact information
+    pub contact: Option<AgentContact>,
+}
+
+/// Contact information for the agent provider
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentContact {
+    /// Contact email address
+    pub email: Option<String>,
+}
+
+/// Constellation-specific metadata extensions
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConstellationMetadata {
+    /// The agent's functional role in Constellation
+    pub role: String,
+    /// Internal execution status
+    pub internal_status: String,
+    /// Internal capabilities list
+    pub capabilities: Vec<String>,
+    /// When the agent was last active internally
+    pub last_seen: Option<String>,
+}
+
+/// A2A AgentCard representing an agent in the Constellation system
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Agent {
-    /// Unique agent identifier.
-    pub id: Uuid,
-    /// The agent's functional role.
-    pub role: AgentRole,
-    /// Current runtime status.
-    pub status: AgentStatus,
-    /// List of actions this agent can perform.
-    pub capabilities: Vec<String>,
+    /// Unique identifier for the agent
+    pub id: String,
+    /// Human-readable name of the agent
+    pub name: String,
+    /// What the agent does
+    pub description: String,
+    /// Version of the A2A protocol this agent supports
+    pub protocol_version: String,
+    /// Version of the agent
+    pub version: String,
+    /// Default input media types supported
+    pub default_input_modes: Vec<String>,
+    /// Default output media types supported
+    pub default_output_modes: Vec<String>,
+    /// Information about the organization/developer providing the agent
+    pub provider: AgentProvider,
+    /// Declared capabilities of the agent
+    pub capabilities: AgentCapabilities,
+    /// Specific tasks the agent can perform
+    pub skills: Vec<AgentSkill>,
+    /// Ordered list of supported interfaces
+    pub supported_interfaces: Vec<AgentInterface>,
+    /// Constellation platform extensions
+    pub metadata: Option<serde_json::Value>,
+    /// Whether the agent supports providing an extended agent card when authenticated
+    pub supports_extended_agent_card: Option<bool>,
+    /// URL to additional documentation about the agent
+    pub documentation_url: Option<String>,
+    /// URL to an icon for the agent
+    pub icon_url: Option<String>,
 }
 
 impl Agent {
-    /// Create a new agent with the given role and capabilities.
-    pub fn new(role: AgentRole, capabilities: Vec<String>) -> Self {
+    /// Create a new A2A-compliant agent
+    pub fn new(
+        id: String,
+        name: String,
+        description: String,
+        provider_name: String,
+        skills: Vec<AgentSkill>,
+        supported_interfaces: Vec<AgentInterface>,
+    ) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id,
+            name,
+            description,
+            protocol_version: "1.0".to_string(),
+            version: "1.0.0".to_string(),
+            default_input_modes: vec!["text/plain".to_string(), "application/json".to_string()],
+            default_output_modes: vec!["text/plain".to_string(), "application/json".to_string()],
+            provider: AgentProvider {
+                name: provider_name,
+                url: None,
+                contact: None,
+            },
+            capabilities: AgentCapabilities::default(),
+            skills,
+            supported_interfaces,
+            metadata: None,
+            supports_extended_agent_card: Some(false),
+            documentation_url: None,
+            icon_url: None,
+        }
+    }
+
+    /// Create a Constellation agent with role-based metadata
+    pub fn new_constellation_agent(
+        id: String,
+        name: String,
+        description: String,
+        role: String,
+        capabilities: Vec<String>,
+        skills: Vec<AgentSkill>,
+        supported_interfaces: Vec<AgentInterface>,
+    ) -> Self {
+        let mut agent = Self::new(id, name, description, "Constellation Team".to_string(), skills, supported_interfaces);
+        
+        let metadata = ConstellationMetadata {
             role,
-            status: AgentStatus::Idle,
+            internal_status: "idle".to_string(),
             capabilities,
-        }
+            last_seen: None,
+        };
+        
+        agent.metadata = Some(serde_json::json!({
+            "constellation": metadata
+        }));
+        
+        agent
     }
 
-    /// Activate the agent.
-    /// Returns `Ok(())` if successful, or `Err` if the agent is terminated.
-    pub fn activate(&mut self) -> Result<(), &'static str> {
-        if self.status == AgentStatus::Terminated {
-            return Err("Cannot activate a terminated agent");
-        }
-        self.status = AgentStatus::Active;
-        Ok(())
+    /// Check if agent supports a specific protocol binding
+    pub fn supports_protocol(&self, protocol: ProtocolBinding) -> bool {
+        self.supported_interfaces
+            .iter()
+            .any(|interface| interface.protocol_binding == protocol)
     }
 
-    /// Deactivate the agent (set to idle).
-    /// Returns `Ok(())` if successful, or `Err` if the agent is terminated.
-    pub fn deactivate(&mut self) -> Result<(), &'static str> {
-        if self.status == AgentStatus::Terminated {
-            return Err("Cannot deactivate a terminated agent");
-        }
-        self.status = AgentStatus::Idle;
-        Ok(())
+    /// Get the preferred interface URL for a specific protocol
+    pub fn get_interface_url(&self, protocol: ProtocolBinding) -> Option<&String> {
+        self.supported_interfaces
+            .iter()
+            .find(|interface| interface.protocol_binding == protocol)
+            .map(|interface| &interface.url)
     }
 
-    /// Terminate the agent.
-    /// Returns `Ok(())` if successful, or `Err` if the agent is already terminated.
-    pub fn terminate(&mut self) -> Result<(), &'static str> {
-        if self.status == AgentStatus::Terminated {
-            return Err("Agent is already terminated");
-        }
-        self.status = AgentStatus::Terminated;
-        Ok(())
+    /// Check if agent has a specific skill
+    pub fn has_skill(&self, skill_id: &str) -> bool {
+        self.skills.iter().any(|skill| skill.id == skill_id)
+    }
+
+    /// Get a specific skill by ID
+    pub fn get_skill(&self, skill_id: &str) -> Option<&AgentSkill> {
+        self.skills.iter().find(|skill| skill.id == skill_id)
     }
 }
 
@@ -97,142 +230,240 @@ mod tests {
 
     #[test]
     fn test_agent_new() {
-        let capabilities = vec!["calculate".to_string(), "analyze".to_string()];
-        let agent = Agent::new(AgentRole::Engineer, capabilities.clone());
+        let skill = AgentSkill {
+            id: "calculation".to_string(),
+            name: "Calculation".to_string(),
+            description: "Performs mathematical calculations".to_string(),
+            tags: vec!["math".to_string(), "analysis".to_string()],
+            examples: Some(vec!["Calculate 2 + 2".to_string()]),
+            input_modes: None,
+            output_modes: None,
+        };
 
-        assert_eq!(agent.role, AgentRole::Engineer);
-        assert_eq!(agent.status, AgentStatus::Idle);
-        assert_eq!(agent.capabilities, capabilities);
+        let interface = AgentInterface {
+            url: "https://agent.example.com/a2a/v1".to_string(),
+            protocol_binding: ProtocolBinding::HttpJson,
+            tenant: None,
+        };
+
+        let agent = Agent::new(
+            "agent-alpha".to_string(),
+            "Alpha Agent".to_string(),
+            "Handles calculation tasks".to_string(),
+            "Constellation Team".to_string(),
+            vec![skill.clone()],
+            vec![interface.clone()],
+        );
+
+        assert_eq!(agent.id, "agent-alpha");
+        assert_eq!(agent.name, "Alpha Agent");
+        assert_eq!(agent.protocol_version, "1.0");
+        assert_eq!(agent.version, "1.0.0");
+        assert_eq!(agent.skills.len(), 1);
+        assert_eq!(agent.skills[0].id, "calculation");
+        assert_eq!(agent.supported_interfaces.len(), 1);
+        assert_eq!(agent.supported_interfaces[0].protocol_binding, ProtocolBinding::HttpJson);
     }
 
     #[test]
-    fn test_agent_status_transitions() {
-        let mut agent = Agent::new(AgentRole::Architect, vec![]);
+    fn test_constellation_agent_new() {
+        let skill = AgentSkill {
+            id: "system-design".to_string(),
+            name: "System Design".to_string(),
+            description: "Designs system architecture".to_string(),
+            tags: vec!["architecture".to_string(), "design".to_string()],
+            examples: None,
+            input_modes: None,
+            output_modes: None,
+        };
 
-        assert!(agent.activate().is_ok());
-        assert_eq!(agent.status, AgentStatus::Active);
+        let interface = AgentInterface {
+            url: "https://architect.constellation.example.com/a2a/v1".to_string(),
+            protocol_binding: ProtocolBinding::HttpJson,
+            tenant: None,
+        };
 
-        assert!(agent.deactivate().is_ok());
-        assert_eq!(agent.status, AgentStatus::Idle);
+        let agent = Agent::new_constellation_agent(
+            "architect-001".to_string(),
+            "System Architect".to_string(),
+            "Designs system architecture and data flows".to_string(),
+            "architect".to_string(),
+            vec!["system-design".to_string(), "data-modeling".to_string()],
+            vec![skill],
+            vec![interface],
+        );
 
-        assert!(agent.terminate().is_ok());
-        assert_eq!(agent.status, AgentStatus::Terminated);
+        assert_eq!(agent.id, "architect-001");
+        assert_eq!(agent.name, "System Architect");
+        assert_eq!(agent.provider.name, "Constellation Team");
+        
+        // Check metadata
+        assert!(agent.metadata.is_some());
+        let metadata = agent.metadata.as_ref().unwrap();
+        assert!(metadata.get("constellation").is_some());
     }
 
     #[test]
-    fn test_terminated_agent_cannot_be_activated() {
-        let mut agent = Agent::new(AgentRole::Engineer, vec![]);
+    fn test_protocol_support() {
+        let agent = Agent::new(
+            "test-agent".to_string(),
+            "Test Agent".to_string(),
+            "Test agent".to_string(),
+            "Test Provider".to_string(),
+            vec![],
+            vec![
+                AgentInterface {
+                    url: "https://test.com/jsonrpc".to_string(),
+                    protocol_binding: ProtocolBinding::JsonRpc,
+                    tenant: None,
+                },
+                AgentInterface {
+                    url: "https://test.com/http".to_string(),
+                    protocol_binding: ProtocolBinding::HttpJson,
+                    tenant: None,
+                },
+            ],
+        );
 
-        // Terminate the agent
-        assert!(agent.terminate().is_ok());
-        assert_eq!(agent.status, AgentStatus::Terminated);
-
-        // Attempt to activate should fail
-        let result = agent.activate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Cannot activate a terminated agent");
-        assert_eq!(agent.status, AgentStatus::Terminated);
+        assert!(agent.supports_protocol(ProtocolBinding::JsonRpc));
+        assert!(agent.supports_protocol(ProtocolBinding::HttpJson));
+        assert!(!agent.supports_protocol(ProtocolBinding::Grpc));
+        
+        assert_eq!(agent.get_interface_url(ProtocolBinding::JsonRpc), Some(&"https://test.com/jsonrpc".to_string()));
+        assert_eq!(agent.get_interface_url(ProtocolBinding::Grpc), None);
     }
 
     #[test]
-    fn test_terminated_agent_cannot_be_deactivated() {
-        let mut agent = Agent::new(AgentRole::Engineer, vec![]);
+    fn test_skill_operations() {
+        let skill1 = AgentSkill {
+            id: "skill-1".to_string(),
+            name: "Skill One".to_string(),
+            description: "First skill".to_string(),
+            tags: vec!["tag1".to_string()],
+            examples: None,
+            input_modes: None,
+            output_modes: None,
+        };
 
-        // Terminate the agent
-        assert!(agent.terminate().is_ok());
-        assert_eq!(agent.status, AgentStatus::Terminated);
+        let skill2 = AgentSkill {
+            id: "skill-2".to_string(),
+            name: "Skill Two".to_string(),
+            description: "Second skill".to_string(),
+            tags: vec!["tag2".to_string()],
+            examples: None,
+            input_modes: None,
+            output_modes: None,
+        };
 
-        // Attempt to deactivate should fail
-        let result = agent.deactivate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Cannot deactivate a terminated agent");
-        assert_eq!(agent.status, AgentStatus::Terminated);
-    }
+        let agent = Agent::new(
+            "test-agent".to_string(),
+            "Test Agent".to_string(),
+            "Test agent".to_string(),
+            "Test Provider".to_string(),
+            vec![skill1.clone(), skill2.clone()],
+            vec![],
+        );
 
-    #[test]
-    fn test_terminated_agent_cannot_be_reterminated() {
-        let mut agent = Agent::new(AgentRole::Engineer, vec![]);
-
-        // Terminate the agent
-        assert!(agent.terminate().is_ok());
-        assert_eq!(agent.status, AgentStatus::Terminated);
-
-        // Attempt to terminate again should fail
-        let result = agent.terminate();
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Agent is already terminated");
-        assert_eq!(agent.status, AgentStatus::Terminated);
+        assert!(agent.has_skill("skill-1"));
+        assert!(agent.has_skill("skill-2"));
+        assert!(!agent.has_skill("skill-3"));
+        
+        assert_eq!(agent.get_skill("skill-1").unwrap().name, "Skill One");
+        assert_eq!(agent.get_skill("skill-3"), None);
     }
 
     #[test]
     fn test_agent_serialization() {
+        let skill = AgentSkill {
+            id: "test-skill".to_string(),
+            name: "Test Skill".to_string(),
+            description: "A test skill".to_string(),
+            tags: vec!["test".to_string()],
+            examples: Some(vec!["Test example".to_string()]),
+            input_modes: Some(vec!["text/plain".to_string()]),
+            output_modes: Some(vec!["application/json".to_string()]),
+        };
+
+        let interface = AgentInterface {
+            url: "https://test.com/a2a/v1".to_string(),
+            protocol_binding: ProtocolBinding::HttpJson,
+            tenant: Some("test-tenant".to_string()),
+        };
+
         let agent = Agent {
-            id: uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap(),
-            role: AgentRole::Ceo,
-            status: AgentStatus::Active,
-            capabilities: vec!["decide".to_string(), "approve".to_string()],
+            id: "test-agent".to_string(),
+            name: "Test Agent".to_string(),
+            description: "A test agent".to_string(),
+            protocol_version: "1.0".to_string(),
+            version: "1.0.0".to_string(),
+            default_input_modes: vec!["text/plain".to_string()],
+            default_output_modes: vec!["application/json".to_string()],
+            provider: AgentProvider {
+                name: "Test Provider".to_string(),
+                url: Some("https://test.com".to_string()),
+                contact: Some(AgentContact {
+                    email: Some("contact@test.com".to_string()),
+                }),
+            },
+            capabilities: AgentCapabilities {
+                streaming: Some(true),
+                push_notifications: Some(false),
+                state_transition_history: Some(true),
+            },
+            skills: vec![skill],
+            supported_interfaces: vec![interface],
+            metadata: Some(serde_json::json!({
+                "constellation": {
+                    "role": "engineer",
+                    "internal_status": "active",
+                    "capabilities": ["rust", "system-design"],
+                    "last_seen": "2025-01-15T10:25:00Z"
+                }
+            })),
+            supports_extended_agent_card: Some(true),
+            documentation_url: Some("https://docs.test.com".to_string()),
+            icon_url: Some("https://test.com/icon.png".to_string()),
         };
 
         let json = serde_json::to_string(&agent).unwrap();
-        let expected_json = r#"{"id":"123e4567-e89b-12d3-a456-426614174000","role":"ceo","status":"active","capabilities":["decide","approve"]}"#;
+        let deserialized: Agent = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(json, expected_json);
+        assert_eq!(deserialized.id, "test-agent");
+        assert_eq!(deserialized.name, "Test Agent");
+        assert_eq!(deserialized.protocol_version, "1.0");
+        assert_eq!(deserialized.skills.len(), 1);
+        assert_eq!(deserialized.skills[0].id, "test-skill");
+        assert_eq!(deserialized.supported_interfaces.len(), 1);
+        assert_eq!(deserialized.supported_interfaces[0].protocol_binding, ProtocolBinding::HttpJson);
+        assert!(deserialized.metadata.is_some());
     }
 
     #[test]
-    fn test_agent_deserialization() {
-        let json = r#"{
-            "id": "123e4567-e89b-12d3-a456-426614174000",
-            "role": "cfo",
-            "status": "idle",
-            "capabilities": ["budget", "allocate"]
-        }"#;
-
-        let agent: Agent = serde_json::from_str(json).unwrap();
-
-        assert_eq!(
-            agent.id,
-            uuid::Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap()
-        );
-        assert_eq!(agent.role, AgentRole::Cfo);
-        assert_eq!(agent.status, AgentStatus::Idle);
-        assert_eq!(
-            agent.capabilities,
-            vec!["budget".to_string(), "allocate".to_string()]
-        );
-    }
-
-    #[test]
-    fn test_agent_role_enum_values() {
-        // Test all enum values match OpenSpec schema
+    fn test_protocol_binding_enum_values() {
         let test_cases = vec![
-            (AgentRole::Ceo, "ceo"),
-            (AgentRole::Cfo, "cfo"),
-            (AgentRole::Architect, "architect"),
-            (AgentRole::Engineer, "engineer"),
-            (AgentRole::Devops, "devops"),
-            (AgentRole::Qa, "qa"),
-            (AgentRole::SpecManager, "spec_manager"),
-            (AgentRole::GithubAutomation, "github_automation"),
+            (ProtocolBinding::JsonRpc, "JSONRPC"),
+            (ProtocolBinding::Grpc, "GRPC"),
+            (ProtocolBinding::HttpJson, "HTTP+JSON"),
         ];
 
-        for (role, expected_str) in test_cases {
-            let json = serde_json::to_string(&role).unwrap();
+        for (protocol, expected_str) in test_cases {
+            let json = serde_json::to_string(&protocol).unwrap();
             assert_eq!(json, format!("\"{}\"", expected_str));
         }
     }
 
     #[test]
-    fn test_agent_status_enum_values() {
-        // Test all enum values match OpenSpec schema
+    fn test_security_scheme_enum_values() {
         let test_cases = vec![
-            (AgentStatus::Idle, "idle"),
-            (AgentStatus::Active, "active"),
-            (AgentStatus::Terminated, "terminated"),
+            (SecuritySchemeType::ApiKey, "api_key"),
+            (SecuritySchemeType::Http, "http"),
+            (SecuritySchemeType::Oauth2, "oauth2"),
+            (SecuritySchemeType::OpenIdConnect, "open_id_connect"),
+            (SecuritySchemeType::MutualTls, "mutual_tls"),
         ];
 
-        for (status, expected_str) in test_cases {
-            let json = serde_json::to_string(&status).unwrap();
+        for (scheme, expected_str) in test_cases {
+            let json = serde_json::to_string(&scheme).unwrap();
             assert_eq!(json, format!("\"{}\"", expected_str));
         }
     }
