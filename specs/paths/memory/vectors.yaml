@@ -1,0 +1,33 @@
+post:
+  summary: Store a vector embedding
+  description: Store a vector embedding in the memory layer.
+  operationId: storeVector
+  tags:
+    - memory
+  requestBody:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+            - embedding
+            - metadata
+          properties:
+            embedding:
+              type: array
+              items:
+                type: number
+                format: float
+              description: The vector embedding
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Associated metadata
+  responses:
+    '201':
+      description: Vector stored successfully
+    '400':
+      description: Invalid input
+    '500':
+      description: Internal server error

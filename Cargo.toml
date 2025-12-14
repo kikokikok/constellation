@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "crates/constellation-core",
+]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1.37", features = ["full"] }
+axum = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"

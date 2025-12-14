@@ -1,0 +1,35 @@
+Budget:
+  type: object
+  required:
+    - id
+    - total
+    - allocated
+    - remaining
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique budget identifier
+    total:
+      type: number
+      format: float
+      minimum: 0
+      description: Total budget amount
+    allocated:
+      type: number
+      format: float
+      minimum: 0
+      description: Amount already allocated
+    remaining:
+      type: number
+      format: float
+      minimum: 0
+      description: Remaining budget amount
+    currency:
+      type: string
+      default: USD
+      description: Currency code
+    period:
+      type: string
+      enum: [monthly, quarterly, annually]
+      description: Budget period
