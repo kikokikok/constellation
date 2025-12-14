@@ -3,7 +3,9 @@
 //! This example shows how to create and execute a DTG for tracking
 //! multi-agent skill execution as data transformations.
 
-use constellation_core::{DataTransformationGraph, DtgDataRef, DtgMetrics, DtgNode};
+use constellation_core::{
+    dtg::engine::DtgExecutionEngine, DataTransformationGraph, DtgDataRef, DtgMetrics, DtgNode,
+};
 use uuid::Uuid;
 
 fn main() {
@@ -26,7 +28,8 @@ fn main() {
 
     // Create transformation nodes
     let mut node1 = DtgNode::new("data_validation".to_string(), "validator_agent".to_string());
-    node1.add_input(input_data.clone());
+    // Node1 is a root node - it takes graph input, not another node's output
+    // In a real scenario, this would be connected to graph_inputs
 
     let validation_output = DtgDataRef {
         id: Uuid::new_v4(),
@@ -94,101 +97,135 @@ fn main() {
     println!("Graph name: {}", dtg.name);
     println!("Number of nodes: {}", dtg.nodes.len());
     println!("Number of edges: {}", dtg.edges.len());
-    println!("Root nodes: {:?}", dtg.root_nodes);
+    // Calculate root nodes (nodes with no incoming edges)
+    let root_nodes: Vec<Uuid> = dtg.nodes.keys()
+        .filter(|node_id| !dtg.edges.iter().any(|edge| edge.target == **node_id))
+        .cloned()
+        .collect();
+    println!("Root nodes: {:?}", root_nodes);
     println!("Graph status: {:?}", dtg.status);
     println!("Is acyclic: {}", dtg.is_acyclic());
 
-    // Simulate execution
-    println!("\n=== Simulating DTG Execution ===\n");
-
-    dtg.mark_executing();
-
-    // Update node statuses
-    if let Some(node) = dtg.nodes.get_mut(&node1_id) {
-        node.mark_executing();
-        println!("Node 1 ({}) started execution", node.skill_id);
-
-        // Simulate completion
-        let metrics = DtgMetrics {
-            cpu_time_ms: 100,
-            memory_bytes: 1024 * 1024,
-            network_bytes: 1024,
-            disk_bytes: 2048,
-            retry_count: 0,
-            quality_score: 0.95,
-            confidence_score: 0.98,
+    // Create execution engine
+    println!("\n=== Creating DTG Execution Engine ===\n");
+    
+    let executor = Box::new(|node: &mut DtgNode| {
+        println!("  Executing node: {} (skill: {})", node.id, node.skill_id);
+        
+        // Simulate different execution times based on skill
+        let metrics = match node.skill_id.as_str() {
+            "data_validation" => DtgMetrics {
+                cpu_time_ms: 100,
+                memory_bytes: 1024 * 1024,
+                network_bytes: 1024,
+                disk_bytes: 2048,
+                retry_count: 0,
+                quality_score: 0.95,
+                confidence_score: 0.98,
+                latency_ms: 50,
+                throughput_ops_per_sec: 100.0,
+                error_rate: 0.01,
+                data_consistency_score: 0.98,
+                schema_compliance_score: 0.95,
+                business_value_score: 0.9,
+                collected_at: chrono::Utc::now(),
+            },
+            "data_enrichment" => DtgMetrics {
+                cpu_time_ms: 200,
+                memory_bytes: 2 * 1024 * 1024,
+                network_bytes: 2048,
+                disk_bytes: 4096,
+                retry_count: 1,
+                quality_score: 0.90,
+                confidence_score: 0.95,
+                latency_ms: 100,
+                throughput_ops_per_sec: 50.0,
+                error_rate: 0.05,
+                data_consistency_score: 0.92,
+                schema_compliance_score: 0.88,
+                business_value_score: 0.85,
+                collected_at: chrono::Utc::now(),
+            },
+            "data_analysis" => DtgMetrics {
+                cpu_time_ms: 150,
+                memory_bytes: 3 * 1024 * 1024,
+                network_bytes: 1024,
+                disk_bytes: 1024,
+                retry_count: 0,
+                quality_score: 0.98,
+                confidence_score: 0.99,
+                latency_ms: 75,
+                throughput_ops_per_sec: 80.0,
+                error_rate: 0.02,
+                data_consistency_score: 0.96,
+                schema_compliance_score: 0.94,
+                business_value_score: 0.95,
+                collected_at: chrono::Utc::now(),
+            },
+            _ => DtgMetrics::default(),
         };
-        node.mark_completed(metrics);
-        println!(
-            "Node 1 completed with quality score: {:.2}",
-            node.metrics.quality_score
-        );
+        
+        // Simulate work
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        
+        Ok(metrics)
+    });
+    
+    let mut engine = DtgExecutionEngine::new(dtg, executor);
+    
+    // Validate the graph
+    match engine.validate() {
+        Ok(_) => println!("✓ Graph validation passed"),
+        Err(errors) => {
+            println!("✗ Graph validation failed:");
+            for error in errors {
+                println!("  - {}", error);
+            }
+            return;
+        }
     }
-
-    if let Some(node) = dtg.nodes.get_mut(&node2_id) {
-        node.mark_executing();
-        println!("Node 2 ({}) started execution", node.skill_id);
-
-        let metrics = DtgMetrics {
-            cpu_time_ms: 200,
-            memory_bytes: 2 * 1024 * 1024,
-            network_bytes: 2048,
-            disk_bytes: 4096,
-            retry_count: 1,
-            quality_score: 0.90,
-            confidence_score: 0.95,
-        };
-        node.mark_completed(metrics);
-        println!(
-            "Node 2 completed with quality score: {:.2}",
-            node.metrics.quality_score
-        );
+    
+    // Execute the graph
+    println!("\n=== Executing DTG ===\n");
+    
+    match engine.execute() {
+        Ok(_) => {
+            println!("✓ DTG execution completed successfully");
+            
+            let stats = engine.stats();
+            println!("\nExecution Statistics:");
+            println!("  Total nodes: {}", stats.total_nodes);
+            println!("  Completed: {}", stats.nodes_completed);
+            println!("  Failed: {}", stats.nodes_failed);
+            println!("  Execution time: {}ms", stats.total_execution_time_ms);
+            
+            let graph = engine.graph();
+            println!("\nFinal graph status: {:?}", graph.status);
+            println!(
+                "Execution time: {:?}",
+                graph.completed_at.unwrap() - graph.started_at
+            );
+        }
+        Err(error) => {
+            println!("✗ DTG execution failed: {}", error);
+        }
     }
-
-    if let Some(node) = dtg.nodes.get_mut(&node3_id) {
-        node.mark_executing();
-        println!("Node 3 ({}) started execution", node.skill_id);
-
-        let metrics = DtgMetrics {
-            cpu_time_ms: 150,
-            memory_bytes: 3 * 1024 * 1024,
-            network_bytes: 1024,
-            disk_bytes: 1024,
-            retry_count: 0,
-            quality_score: 0.98,
-            confidence_score: 0.99,
-        };
-        node.mark_completed(metrics);
-        println!(
-            "Node 3 completed with quality score: {:.2}",
-            node.metrics.quality_score
-        );
-    }
-
-    // Mark graph as completed
-    dtg.mark_completed();
-
-    println!("\n=== DTG Execution Complete ===\n");
-    println!("Final graph status: {:?}", dtg.status);
-    println!(
-        "Execution time: {:?}",
-        dtg.completed_at.unwrap() - dtg.started_at
-    );
 
     // Calculate overall quality
-    let total_quality: f64 = dtg
+    let graph = engine.graph();
+    let total_quality: f64 = graph
         .nodes
         .values()
         .map(|node| node.metrics.quality_score)
         .sum();
-    let avg_quality = total_quality / dtg.nodes.len() as f64;
+    let avg_quality = total_quality / graph.nodes.len() as f64;
     println!("Average quality score: {:.2}", avg_quality);
 
     // Show dependencies
     println!("\n=== Dependency Analysis ===\n");
-    for (node_id, node) in &dtg.nodes {
-        let deps = dtg.get_dependencies(*node_id);
-        let dependents = dtg.get_dependents(*node_id);
+    for (node_id, node) in &graph.nodes {
+        let deps = graph.get_dependencies(*node_id);
+        let dependents = graph.get_dependents(*node_id);
 
         println!("Node {} ({}):", node_id, node.skill_id);
         println!("  Dependencies: {:?}", deps);
@@ -197,7 +234,7 @@ fn main() {
     }
 
     // Serialize to JSON
-    let json = serde_json::to_string_pretty(&dtg).unwrap();
+    let json = serde_json::to_string_pretty(&graph).unwrap();
     println!("\n=== DTG JSON Representation (first 500 chars) ===\n");
     println!("{}...", &json[..500.min(json.len())]);
 }

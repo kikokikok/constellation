@@ -145,7 +145,7 @@ pub struct ExecutorConfig {
 }
 
 /// Executor domain specialization.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorDomain {
     CodeGeneration,
@@ -246,6 +246,9 @@ pub struct ExecutorPerformance {
 
     /// Error rate (0.0 to 1.0).
     pub error_rate: f64,
+
+    /// Success rate (0.0 to 1.0).
+    pub success_rate: f64,
 
     /// Availability (0.0 to 1.0).
     pub availability: f64,
@@ -716,6 +719,12 @@ impl ExecutorConfig {
     }
 }
 
+impl Default for ExecutorConfig {
+    fn default() -> Self {
+        Self::new("default".to_string(), ExecutorDomain::CodeGeneration)
+    }
+}
+
 impl Default for ExecutorModel {
     fn default() -> Self {
         Self {
@@ -737,6 +746,7 @@ impl Default for ExecutorPerformance {
             p95_latency_ms: 5000,
             p99_latency_ms: 10000,
             error_rate: 0.05,
+            success_rate: 0.95,
             availability: 0.99,
             cost_per_1k_tasks: 0.50,
         }

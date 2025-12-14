@@ -116,6 +116,27 @@ pub struct DtgMetrics {
 
     /// Confidence score (0.0 to 1.0) of the transformation.
     pub confidence_score: f64,
+
+    /// Latency in milliseconds.
+    pub latency_ms: u64,
+
+    /// Throughput in operations per second.
+    pub throughput_ops_per_sec: f64,
+
+    /// Error rate (0.0 to 1.0).
+    pub error_rate: f64,
+
+    /// Data consistency score (0.0 to 1.0).
+    pub data_consistency_score: f64,
+
+    /// Schema compliance score (0.0 to 1.0).
+    pub schema_compliance_score: f64,
+
+    /// Business value score (0.0 to 1.0).
+    pub business_value_score: f64,
+
+    /// Timestamp when metrics were collected.
+    pub collected_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// A complete Data Transformation Graph.
@@ -470,6 +491,13 @@ impl Default for DtgMetrics {
             retry_count: 0,
             quality_score: 1.0,
             confidence_score: 1.0,
+            latency_ms: 0,
+            throughput_ops_per_sec: 0.0,
+            error_rate: 0.0,
+            data_consistency_score: 1.0,
+            schema_compliance_score: 1.0,
+            business_value_score: 1.0,
+            collected_at: chrono::Utc::now(),
         }
     }
 }
@@ -496,9 +524,6 @@ impl DataTransformationGraph {
     /// Add a node to the graph.
     pub fn add_node(&mut self, node: DtgNode) -> Uuid {
         let node_id = node.id;
-        if node.inputs.is_empty() {
-            self.root_nodes.push(node_id);
-        }
         self.nodes.insert(node_id, node);
         node_id
     }

@@ -3,15 +3,22 @@
 //! This example shows how to configure LLM strategists with SLM executors
 //! for optimal performance and resource utilization.
 
+use constellation_core::hybrid::{
+    LlmStrategistCoordinator, Task, TaskResult,
+};
+use constellation_core::hybrid::coordinator::ExecutorStatus;
 use constellation_core::models::hybrid_agent::{
     AllocationStrategy, CommunicationPattern, CoordinationStrategyType, DecisionMakingApproach,
     ExecutorDomain, ExecutorModelSize, FallbackAction, FallbackStrategy, FallbackTrigger,
     FeedbackMechanism, ModelProvider, ScalingStrategy, StrategistCapability,
 };
 use constellation_core::{
-    CoordinationStrategy, ExecutorConfig, HybridAgentConfig, PerformanceTargets,
-    ResourceAllocation, StrategistConfig,
+    CoordinationStrategy, ExecutorConfig, HybridAgentConfig, HybridResourceAllocation,
+    PerformanceTargets, StrategistConfig,
 };
+use serde_json::json;
+use std::thread;
+use std::time::Duration;
 
 fn main() {
     println!("=== Hybrid Agent Architecture Example ===\n");
@@ -76,7 +83,7 @@ fn main() {
     agent.coordination = coordination;
 
     // Configure resource allocation
-    let mut allocation = ResourceAllocation::default();
+    let mut allocation = HybridResourceAllocation::default();
     allocation.strategy = AllocationStrategy::Predictive;
     allocation.scaling_strategy = ScalingStrategy::Horizontal;
     agent.resource_allocation = allocation;
@@ -255,4 +262,149 @@ fn main() {
     let json = serde_json::to_string_pretty(&agent).unwrap();
     println!("\n=== Hybrid Agent JSON (first 600 chars) ===");
     println!("{}...", &json[..600.min(json.len())]);
+
+    // Demonstrate LLM strategist coordinator
+    println!("\n=== LLM Strategist Coordinator Demo ===");
+    demonstrate_coordinator(agent);
+}
+
+fn demonstrate_coordinator(config: HybridAgentConfig) {
+    println!("\n--- Initializing Coordinator ---");
+    
+    // Create coordinator
+    let coordinator = LlmStrategistCoordinator::new(config.clone())
+        .with_fallback_strategies(config.fallback_strategies.clone());
+
+    // Register executors
+    println!("Registering executors...");
+    for executor in &config.executors {
+        let status = ExecutorStatus::new(executor.id.clone())
+            .with_load(0.3)
+            .with_performance(
+                executor.performance.availability as f64,
+                0.85,
+                executor.performance.avg_latency_ms as f64,
+            )
+            .with_cost(executor.performance.cost_per_1k_tasks / 1000.0)
+            .with_availability(true);
+
+        coordinator
+            .update_executor_status(status)
+            .expect("Failed to update executor status");
+        println!("  - {}: registered", executor.id);
+    }
+
+    // Submit tasks
+    println!("\nSubmitting tasks...");
+    let tasks = vec![
+        Task::new("code_generation".to_string(), json!({"language": "rust", "description": "Create a sorting function"}))
+            .with_priority(75)
+            .with_quality_requirement(0.9)
+            .with_budget_allocation(2.0),
+        Task::new("test_generation".to_string(), json!({"function": "sort", "language": "rust"}))
+            .with_priority(50)
+            .with_quality_requirement(0.8)
+            .with_budget_allocation(1.5),
+        Task::new("research".to_string(), json!({"topic": "sorting algorithms", "depth": "intermediate"}))
+            .with_priority(25)
+            .with_quality_requirement(0.7)
+            .with_budget_allocation(1.0),
+        Task::new("code_review".to_string(), json!({"code": "fn sort() {}", "language": "rust"}))
+            .with_priority(100)
+            .with_quality_requirement(0.95)
+            .with_budget_allocation(3.0),
+    ];
+
+    for task in &tasks {
+        let task_id = coordinator
+            .submit_task(task.clone())
+            .expect("Failed to submit task");
+        println!("  - Task {} submitted (type: {}, priority: {})", 
+            task_id, task.task_type, task.priority);
+    }
+
+    // Assign tasks
+    println!("\nAssigning tasks...");
+    let assignments = coordinator
+        .assign_tasks()
+        .expect("Failed to assign tasks");
+
+    for assignment in &assignments {
+        println!("  - Task {} assigned to executor {}", 
+            assignment.task_id, assignment.executor_id);
+    }
+
+    // Simulate task completion
+    println!("\nSimulating task completion...");
+    for assignment in assignments {
+        let result = TaskResult {
+            task_id: assignment.task_id,
+            executor_id: assignment.executor_id,
+            completed_at: chrono::Utc::now(),
+            result: json!({"output": "Task completed successfully", "quality": 0.9}),
+            success: true,
+            error: None,
+            quality_score: 0.9,
+            execution_time_ms: 1500,
+            resource_usage: constellation_core::hybrid::ResourceUsage {
+                cpu_core_seconds: 0.5,
+                memory_mb_seconds: 512.0,
+                gpu_memory_mb_seconds: None,
+                network_mb: 0.1,
+            },
+            cost: 0.5,
+        };
+
+        coordinator
+            .complete_task(result)
+            .expect("Failed to complete task");
+        println!("  - Task {} completed", assignment.task_id);
+    }
+
+    // Get performance metrics
+    println!("\nPerformance Metrics:");
+    let metrics = coordinator.get_performance_metrics();
+    println!("  - Throughput: {:.2} tasks/sec", metrics.throughput_tps);
+    println!("  - Avg Latency: {:.2} ms", metrics.avg_latency_ms);
+    println!("  - Success Rate: {:.2}%", metrics.success_rate * 100.0);
+    println!("  - Avg Quality: {:.2}%", metrics.avg_quality_score * 100.0);
+    println!("  - Resource Utilization: {:.2}%", metrics.resource_utilization * 100.0);
+    println!("  - Cost Efficiency: {:.2}%", metrics.cost_efficiency * 100.0);
+    println!("  - Availability: {:.2}%", metrics.availability * 100.0);
+
+    // Get queue stats
+    println!("\nQueue Statistics:");
+    let queue_stats = coordinator.get_queue_stats();
+    println!("  - Pending Tasks: {}", queue_stats.pending_tasks);
+    println!("  - Active Tasks: {}", queue_stats.active_tasks);
+    println!("  - Completed Tasks: {}", queue_stats.completed_tasks);
+    println!("  - Total Processed: {}", queue_stats.total_tasks_processed);
+    println!("  - Total Budget Spent: ${:.2}", queue_stats.total_budget_spent);
+
+    // Get executor stats
+    println!("\nExecutor Statistics:");
+    let executor_stats = coordinator.get_executor_stats();
+    for stats in executor_stats {
+        println!("  - {}:", stats.executor_id);
+        println!("      Load: {:.1}%", stats.current_load * 100.0);
+        println!("      Available Capacity: {}", stats.available_capacity);
+        println!("      Success Rate: {:.1}%", stats.success_rate * 100.0);
+        println!("      Quality Score: {:.1}%", stats.quality_score * 100.0);
+        println!("      Cost per Task: ${:.4}", stats.cost_per_task);
+        println!("      Available: {}", stats.is_available);
+    }
+
+    // Check fallback conditions
+    println!("\nChecking fallback conditions...");
+    let fallback_actions = coordinator.check_fallback_conditions();
+    if fallback_actions.is_empty() {
+        println!("  - No fallback conditions triggered");
+    } else {
+        println!("  - Fallback actions needed:");
+        for action in fallback_actions {
+            println!("    - {:?}", action);
+        }
+    }
+
+    println!("\n=== Coordinator Demo Complete ===");
 }
