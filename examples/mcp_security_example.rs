@@ -3,9 +3,9 @@
 //! This example shows how to create secure agent communications with
 //! cryptographic provenance and security layers.
 
-use constellation_core::models::mcp::ComplianceStandard;
-use constellation_core::{
-    McpEncryptedMessage, McpSecureEnvelope, McpSecurityContext, McpSignature, SecurityLevel,
+use constellation_core::models::mcp::{
+    ComplianceStandard, McpEncryptedMessage, McpSecureEnvelope, McpSecurityContext, McpSignature,
+    SecurityLevel,
 };
 
 fn main() {
@@ -95,6 +95,7 @@ fn main() {
         "data_request".to_string(),
         encrypted_payload,
         signature,
+        SecurityLevel::Medium,
     );
 
     // Set expiration (1 hour from now)

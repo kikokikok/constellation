@@ -1,23 +1,37 @@
 ## ADDED Requirements
 
-### Requirement: Message Broker Service
-The system SHALL provide a message broker service that routes messages between agents with delivery guarantees and protocol compliance.
+### Requirement: Hybrid Message Broker Service
+The system SHALL provide a hybrid message broker service with dual-path architecture for optimal performance and reliability. The broker SHALL route messages between agents with A2A protocol compliance and configurable delivery guarantees.
 
-#### Scenario: Agent registration
-- **WHEN** an agent starts up
+#### Scenario: Fast path message routing
+- **WHEN** an agent sends a high-priority message with `delivery_mode: fast`
+- **THEN** the broker SHALL route the message through in-memory queues
+- **AND** achieve throughput > 100,000 messages per second
+- **AND** maintain sub-millisecond latency
+
+#### Scenario: Persistent message routing
+- **WHEN** an agent sends a critical message with `delivery_mode: persistent`
+- **THEN** the broker SHALL store the message in PostgreSQL
+- **AND** guarantee delivery even after broker restart
+- **AND** provide message audit trail
+
+#### Scenario: Agent registration with A2A compatibility
+- **WHEN** an agent starts up with A2A protocol version 1.0 or higher
 - **AND** connects to the message broker
-- **THEN** the broker SHALL register the agent
-- **AND** assign a unique session identifier
+- **THEN** the broker SHALL register the agent with protocol version negotiation
+- **AND** assign a unique session identifier compatible with A2A spec
 
-#### Scenario: Message routing
-- **WHEN** an agent sends a message to a specific recipient
-- **THEN** the broker SHALL route the message to the correct recipient
+#### Scenario: Message routing with A2A headers
+- **WHEN** an agent sends a message with A2A protocol headers
+- **THEN** the broker SHALL preserve all A2A headers during routing
 - **AND** maintain message ordering for each sender-recipient pair
+- **AND** validate message format against A2A schema
 
-#### Scenario: Broadcast messages
-- **WHEN** an agent sends a broadcast message
+#### Scenario: Broadcast messages with A2A compliance
+- **WHEN** an agent sends an A2A-compliant broadcast message
 - **THEN** the broker SHALL deliver the message to all connected agents
-- **AND** exclude the sender from the recipient list
+- **AND** exclude the sender from the recipient list per A2A spec
+- **AND** maintain broadcast delivery tracking
 
 ### Requirement: HTTP/WebSocket Gateway
 The system SHALL provide HTTP and WebSocket interfaces for agent communication.

@@ -7,20 +7,25 @@
 //! Based on research: "Data Transformation Graphs vs. Code Property Graphs"
 //! for tracking multi-agent execution provenance.
 
+use petgraph::algo::{is_cyclic_directed, toposort};
+use petgraph::graph::DiGraph;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+use validator::Validate;
 
 /// A data transformation node in the DTG.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct DtgNode {
     /// Unique identifier for this transformation.
     pub id: Uuid,
 
     /// The agent skill that performed this transformation.
+    #[validate(length(min = 1, message = "Skill ID cannot be empty"))]
     pub skill_id: String,
 
     /// The agent that executed this transformation.
+    #[validate(length(min = 1, message = "Agent ID cannot be empty"))]
     pub agent_id: String,
 
     /// Input data references (UUIDs of previous nodes or external data).
@@ -49,12 +54,13 @@ pub struct DtgNode {
 }
 
 /// Reference to data in the DTG.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct DtgDataRef {
     /// Unique identifier for this data reference.
     pub id: Uuid,
 
     /// Data type (e.g., "json", "text", "binary", "structured").
+    #[validate(length(min = 1, message = "Data type cannot be empty"))]
     pub data_type: String,
 
     /// Schema or format information.
@@ -71,7 +77,7 @@ pub struct DtgDataRef {
 }
 
 /// Status of a DTG node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum DtgNodeStatus {
     /// Transformation is pending execution.
@@ -117,8 +123,8 @@ pub struct DtgMetrics {
     /// Confidence score (0.0 to 1.0) of the transformation.
     pub confidence_score: f64,
 
-    /// Latency in milliseconds.
-    pub latency_ms: u64,
+    /// Execution time in milliseconds.
+    pub execution_time_ms: u64,
 
     /// Throughput in operations per second.
     pub throughput_ops_per_sec: f64,
@@ -135,17 +141,21 @@ pub struct DtgMetrics {
     /// Business value score (0.0 to 1.0).
     pub business_value_score: f64,
 
+    /// Cost incurred for this transformation.
+    pub cost: f64,
+
     /// Timestamp when metrics were collected.
     pub collected_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// A complete Data Transformation Graph.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct DataTransformationGraph {
     /// Unique identifier for this DTG.
     pub id: Uuid,
 
     /// Name or description of this transformation graph.
+    #[validate(length(min = 1, message = "Graph name cannot be empty"))]
     pub name: String,
 
     /// Root nodes (nodes with no dependencies).
@@ -180,7 +190,7 @@ pub struct DataTransformationGraph {
 }
 
 /// Edge representing data flow between DTG nodes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct DtgEdge {
     /// Source node ID.
     pub source: Uuid,
@@ -192,6 +202,7 @@ pub struct DtgEdge {
     pub data_ref: Uuid,
 
     /// Edge type (e.g., "data_flow", "control_flow", "dependency").
+    #[validate(length(min = 1, message = "Edge type cannot be empty"))]
     pub edge_type: String,
 
     /// Metadata about this edge.
@@ -491,12 +502,13 @@ impl Default for DtgMetrics {
             retry_count: 0,
             quality_score: 1.0,
             confidence_score: 1.0,
-            latency_ms: 0,
+            execution_time_ms: 0,
             throughput_ops_per_sec: 0.0,
             error_rate: 0.0,
             data_consistency_score: 1.0,
             schema_compliance_score: 1.0,
             business_value_score: 1.0,
+            cost: 0.0,
             collected_at: chrono::Utc::now(),
         }
     }
@@ -557,6 +569,24 @@ impl DataTransformationGraph {
         self.completed_at = Some(chrono::Utc::now());
     }
 
+    /// Validate the graph structure and data.
+    pub fn validate_graph(&self) -> Result<(), validator::ValidationErrors> {
+        // Validate the graph itself
+        self.validate()?;
+
+        // Validate all nodes
+        for node in self.nodes.values() {
+            node.validate()?;
+        }
+
+        // Validate all edges
+        for edge in &self.edges {
+            edge.validate()?;
+        }
+
+        Ok(())
+    }
+
     /// Get all dependencies for a node.
     pub fn get_dependencies(&self, node_id: Uuid) -> Vec<Uuid> {
         self.edges
@@ -575,43 +605,83 @@ impl DataTransformationGraph {
             .collect()
     }
 
-    /// Check if the graph is acyclic.
+    /// Check if the graph is acyclic using petgraph.
     pub fn is_acyclic(&self) -> bool {
-        // Simple cycle detection using DFS
-        let mut visited = std::collections::HashSet::new();
-        let mut recursion_stack = std::collections::HashSet::new();
+        // Build petgraph representation
+        let mut graph = DiGraph::<Uuid, ()>::new();
+        let mut node_indices = HashMap::new();
 
+        // Add all nodes to the graph
         for node_id in self.nodes.keys() {
-            if !visited.contains(node_id)
-                && self.has_cycle_dfs(*node_id, &mut visited, &mut recursion_stack)
-            {
-                return false;
+            let idx = graph.add_node(*node_id);
+            node_indices.insert(*node_id, idx);
+        }
+
+        // Add all edges to the graph
+        for edge in &self.edges {
+            if let (Some(&source_idx), Some(&target_idx)) = (
+                node_indices.get(&edge.source),
+                node_indices.get(&edge.target),
+            ) {
+                graph.add_edge(source_idx, target_idx, ());
             }
         }
-        true
+
+        // Use petgraph's cycle detection
+        !is_cyclic_directed(&graph)
     }
 
-    fn has_cycle_dfs(
-        &self,
-        node_id: Uuid,
-        visited: &mut std::collections::HashSet<Uuid>,
-        recursion_stack: &mut std::collections::HashSet<Uuid>,
-    ) -> bool {
-        visited.insert(node_id);
-        recursion_stack.insert(node_id);
+    /// Get topological order of nodes using petgraph.
+    pub fn topological_order(&self) -> Result<Vec<Uuid>, Vec<Uuid>> {
+        // Build petgraph representation
+        let mut graph = DiGraph::<Uuid, ()>::new();
+        let mut node_indices = HashMap::new();
 
-        for dependent_id in self.get_dependents(node_id) {
-            if !visited.contains(&dependent_id) {
-                if self.has_cycle_dfs(dependent_id, visited, recursion_stack) {
-                    return true;
-                }
-            } else if recursion_stack.contains(&dependent_id) {
-                return true;
+        // Add all nodes to the graph
+        for node_id in self.nodes.keys() {
+            let idx = graph.add_node(*node_id);
+            node_indices.insert(*node_id, idx);
+        }
+
+        // Add all edges to the graph
+        for edge in &self.edges {
+            if let (Some(&source_idx), Some(&target_idx)) = (
+                node_indices.get(&edge.source),
+                node_indices.get(&edge.target),
+            ) {
+                graph.add_edge(source_idx, target_idx, ());
             }
         }
 
-        recursion_stack.remove(&node_id);
-        false
+        // Get topological order
+        match toposort(&graph, None) {
+            Ok(order) => {
+                let uuids: Vec<Uuid> = order.iter().map(|&idx| graph[idx]).collect();
+                Ok(uuids)
+            }
+            Err(cycle) => {
+                // Find the cycle nodes
+                let mut cycle_nodes = Vec::new();
+                let mut visited = HashSet::new();
+                let mut current = cycle.node_id();
+
+                while !visited.contains(&current) {
+                    visited.insert(current);
+                    cycle_nodes.push(graph[current]);
+
+                    // Find an outgoing edge that's part of the cycle
+                    for neighbor in graph.neighbors_directed(current, petgraph::Direction::Outgoing)
+                    {
+                        if !visited.contains(&neighbor) {
+                            current = neighbor;
+                            break;
+                        }
+                    }
+                }
+
+                Err(cycle_nodes)
+            }
+        }
     }
 }
 

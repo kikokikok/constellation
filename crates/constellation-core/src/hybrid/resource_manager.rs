@@ -10,8 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::models::hybrid_agent::{
-    AllocationPolicy, AllocationStrategy, BudgetAllocation, PriorityLevel, ResourceAllocation,
-    ResourceRequirements, ScalingStrategy,
+    BudgetAllocation, ResourceAllocation, ResourceRequirements, ScalingStrategy,
 };
 
 /// Resource manager for hybrid agent architectures.
@@ -487,16 +486,14 @@ impl ResourceManager {
     }
 
     /// Allocate resources for a task request.
-    pub fn allocate_resources(
-        &self,
-        request: &ResourceRequest,
-    ) -> AllocationResult {
+    pub fn allocate_resources(&self, request: &ResourceRequest) -> AllocationResult {
         let mut pool = self.resource_pool.lock().unwrap();
         let mut budget = self.budget_tracker.lock().unwrap();
         let mut history = self.performance_history.lock().unwrap();
 
         // Check budget constraints
-        let estimated_cost = self.estimate_resource_cost(&request.requirements, request.estimated_duration);
+        let estimated_cost =
+            self.estimate_resource_cost(&request.requirements, request.estimated_duration);
         if !budget.can_allocate(estimated_cost) {
             return AllocationResult::budget_exceeded(request, estimated_cost);
         }
@@ -505,11 +502,11 @@ impl ResourceManager {
         let executor_id = format!("executor-{}", chrono::Utc::now().timestamp());
         if let Some(allocated) = pool.allocate_resources(&request.requirements, &executor_id) {
             // Update budget
-            budget.allocate(estimated_cost, &format!("Executor {}", executor_id));
-            
+            budget.allocate(estimated_cost, &format!("Executor {executor_id}"));
+
             // Record allocation in history
-            history.record_allocation(&request, &allocated, estimated_cost);
-            
+            history.record_allocation(request, &allocated, estimated_cost);
+
             // Create executor info for performance estimation
             let executor_info = ExecutorInfo {
                 id: executor_id.clone(),
@@ -526,12 +523,12 @@ impl ResourceManager {
                 current_load: 0.5,
                 max_capacity: 1.0,
             };
-            
+
             return AllocationResult::success(
                 allocated,
                 executor_id,
                 estimated_cost,
-                self.estimate_performance(&request, &executor_info),
+                self.estimate_performance(request, &executor_info, &history, &pool),
             );
         }
 
@@ -545,7 +542,7 @@ impl ResourceManager {
     pub fn release_resources(&self, executor_id: &str, resources: &ResourceRequirements) {
         let mut pool = self.resource_pool.lock().unwrap();
         pool.release_resources(executor_id, resources);
-        
+
         let mut history = self.performance_history.lock().unwrap();
         history.record_release(executor_id, resources);
     }
@@ -553,7 +550,7 @@ impl ResourceManager {
     /// Update resource allocation configuration.
     pub fn update_allocation_config(&mut self, config: ResourceAllocation) {
         self.allocation_config = config.clone();
-        
+
         // Update resource pool limits
         let mut pool = self.resource_pool.lock().unwrap();
         pool.update_limits(
@@ -565,9 +562,12 @@ impl ResourceManager {
 
     /// Check and apply auto-scaling based on current metrics.
     pub fn check_auto_scaling(&self) -> Vec<ScalingOperation> {
-        let mut controller = self.scaling_controller.lock().unwrap();
-        let history = self.performance_history.lock().unwrap();
+        // Always acquire locks in consistent order to avoid deadlocks:
+        // 1. resource_pool, 2. budget_tracker, 3. performance_history, 4. scaling_controller
+        let pool = self.resource_pool.lock().unwrap();
         let budget = self.budget_tracker.lock().unwrap();
+        let history = self.performance_history.lock().unwrap();
+        let mut controller = self.scaling_controller.lock().unwrap();
 
         // Check if in cooldown period
         if controller.in_cooldown() {
@@ -576,6 +576,11 @@ impl ResourceManager {
 
         // Get current metrics
         let current_metrics = history.get_current_metrics();
+
+        // Don't scale if we don't have meaningful metrics data
+        if history.cpu_utilization.is_empty() {
+            return Vec::new();
+        }
 
         // Determine scaling operations based on strategy
         let operations = match self.allocation_config.scaling_strategy {
@@ -616,9 +621,12 @@ impl ResourceManager {
     }
 
     /// Apply scaling operations.
-    pub fn apply_scaling_operations(&self, operations: Vec<ScalingOperation>) -> Vec<ScalingResult> {
+    pub fn apply_scaling_operations(
+        &self,
+        operations: Vec<ScalingOperation>,
+    ) -> Vec<ScalingResult> {
         let mut results = Vec::new();
-        
+
         for operation in operations {
             match operation.operation_type {
                 ScalingOperationType::ScaleOut => {
@@ -639,7 +647,7 @@ impl ResourceManager {
                 }
             }
         }
-        
+
         results
     }
 
@@ -647,7 +655,7 @@ impl ResourceManager {
     pub fn get_utilization_stats(&self) -> UtilizationStats {
         let pool = self.resource_pool.lock().unwrap();
         let history = self.performance_history.lock().unwrap();
-        
+
         UtilizationStats {
             cpu_utilization: pool.get_cpu_utilization(),
             memory_utilization: pool.get_memory_utilization(),
@@ -660,55 +668,74 @@ impl ResourceManager {
 
     /// Optimize resource allocation based on historical data.
     pub fn optimize_allocation(&self) -> OptimizationRecommendations {
-        let history = self.performance_history.lock().unwrap();
+        // Always acquire locks in consistent order to avoid deadlocks:
+        // 1. resource_pool, 2. budget_tracker, 3. performance_history
         let pool = self.resource_pool.lock().unwrap();
         let budget = self.budget_tracker.lock().unwrap();
-        
+        let history = self.performance_history.lock().unwrap();
+
         let recommendations = history.analyze_patterns();
         let current_utilization = pool.get_utilization_breakdown();
         let budget_utilization = budget.get_budget_utilization();
-        
+
         OptimizationRecommendations {
             resource_recommendations: self.generate_resource_recommendations(
                 &recommendations,
                 &current_utilization,
                 budget_utilization,
             ),
-            scaling_recommendations: self.generate_scaling_recommendations(
-                &recommendations,
-                &current_utilization,
-            ),
-            cost_optimizations: self.generate_cost_optimizations(
-                &recommendations,
-                budget_utilization,
-            ),
+            scaling_recommendations: self
+                .generate_scaling_recommendations(&recommendations, &current_utilization),
+            cost_optimizations: self
+                .generate_cost_optimizations(&recommendations, budget_utilization),
         }
     }
 
     /// Estimate resource cost for given requirements and duration.
-    fn estimate_resource_cost(&self, requirements: &ResourceRequirements, duration: Duration) -> f64 {
+    fn estimate_resource_cost(
+        &self,
+        requirements: &ResourceRequirements,
+        duration: Duration,
+    ) -> f64 {
         let costs = ResourceCosts::default();
         let hours = duration.as_secs_f64() / 3600.0;
-        
+
         let cpu_cost = requirements.cpu_cores as f64 * costs.cpu_cost_per_hour * hours;
-        let memory_cost = requirements.memory_mb as f64 / 1024.0 * costs.memory_cost_per_hour * hours;
-        let gpu_cost = requirements.gpu_memory_mb.unwrap_or(0) as f64 / 1024.0 * costs.gpu_cost_per_hour * hours;
+        let memory_cost =
+            requirements.memory_mb as f64 / 1024.0 * costs.memory_cost_per_hour * hours;
+        let gpu_cost = requirements.gpu_memory_mb.unwrap_or(0) as f64 / 1024.0
+            * costs.gpu_cost_per_hour
+            * hours;
         let disk_cost = requirements.disk_mb as f64 / 1024.0 * costs.disk_cost_per_hour * hours;
         let network_cost = requirements.network_mbps as f64 * costs.network_cost_per_hour * hours;
-        
-        cpu_cost + memory_cost + gpu_cost + disk_cost + network_cost + costs.executor_instance_cost * hours
+
+        cpu_cost
+            + memory_cost
+            + gpu_cost
+            + disk_cost
+            + network_cost
+            + costs.executor_instance_cost * hours
     }
 
     /// Estimate performance for given request and executor.
-    fn estimate_performance(&self, request: &ResourceRequest, executor: &ExecutorInfo) -> EstimatedPerformance {
-        let history = self.performance_history.lock().unwrap();
+    fn estimate_performance(
+        &self,
+        request: &ResourceRequest,
+        executor: &ExecutorInfo,
+        history: &PerformanceHistory,
+        pool: &ResourcePool,
+    ) -> EstimatedPerformance {
         let similar_tasks = history.find_similar_tasks(&request.task_type, &request.domain);
-        
+
         EstimatedPerformance {
             success_rate: self.calculate_estimated_success_rate(executor, &similar_tasks),
-            latency_ms: self.calculate_estimated_latency(executor, &similar_tasks, &request.requirements),
+            latency_ms: self.calculate_estimated_latency(
+                executor,
+                &similar_tasks,
+                &request.requirements,
+            ),
             throughput_tps: self.calculate_estimated_throughput(executor, &similar_tasks),
-            resource_utilization: self.calculate_resource_utilization(&request.requirements),
+            resource_utilization: self.calculate_resource_utilization(&request.requirements, pool),
             cost_efficiency: self.calculate_cost_efficiency(executor, &request.requirements),
         }
     }
@@ -720,14 +747,16 @@ impl ResourceManager {
         scaling_recommendations: &[ScalingRecommendation],
     ) -> Vec<AllocationAlternative> {
         let mut alternatives = Vec::new();
-        
+
         // Alternative 1: Reduced resources
         if let Some(reduced) = self.reduce_resource_requirements(&request.requirements) {
-            let estimated_performance = self.estimate_performance_for_alternative(request, &reduced);
-            let cost_difference = self.estimate_resource_cost(&reduced, request.estimated_duration) 
+            let estimated_performance =
+                self.estimate_performance_for_alternative(request, &reduced);
+            let cost_difference = self.estimate_resource_cost(&reduced, request.estimated_duration)
                 - self.estimate_resource_cost(&request.requirements, request.estimated_duration);
-            
-            let performance_diff = self.calculate_performance_difference(request, &estimated_performance);
+
+            let performance_diff =
+                self.calculate_performance_difference(request, &estimated_performance);
             alternatives.push(AllocationAlternative {
                 resources: reduced,
                 estimated_performance: estimated_performance.clone(),
@@ -736,31 +765,35 @@ impl ResourceManager {
                 time_to_allocate: Duration::from_secs(30), // Estimated time
             });
         }
-        
+
         // Alternative 2: Delayed execution with scaling
         if !scaling_recommendations.is_empty() {
             let scaling_time = self.estimate_scaling_time(scaling_recommendations);
             let scaled_resources = self.get_scaled_resources(scaling_recommendations);
-            
-            let estimated_performance = self.estimate_performance_for_alternative(request, &scaled_resources);
-            
+
+            let estimated_performance =
+                self.estimate_performance_for_alternative(request, &scaled_resources);
+
             alternatives.push(AllocationAlternative {
                 resources: scaled_resources,
                 estimated_performance,
-                cost_difference: 0.0, // Same cost after scaling
+                cost_difference: 0.0,        // Same cost after scaling
                 performance_difference: 0.0, // Same performance after scaling
                 time_to_allocate: scaling_time,
             });
         }
-        
+
         // Alternative 3: Different executor type
         let alternative_executor = self.find_alternative_executor_type(&request.domain);
         if let Some(alt_resources) = alternative_executor {
-            let estimated_performance = self.estimate_performance_for_alternative(request, &alt_resources);
-            let cost_difference = self.estimate_resource_cost(&alt_resources, request.estimated_duration) 
+            let estimated_performance =
+                self.estimate_performance_for_alternative(request, &alt_resources);
+            let cost_difference = self
+                .estimate_resource_cost(&alt_resources, request.estimated_duration)
                 - self.estimate_resource_cost(&request.requirements, request.estimated_duration);
-            
-            let performance_diff = self.calculate_performance_difference(request, &estimated_performance);
+
+            let performance_diff =
+                self.calculate_performance_difference(request, &estimated_performance);
             alternatives.push(AllocationAlternative {
                 resources: alt_resources,
                 estimated_performance: estimated_performance.clone(),
@@ -769,16 +802,20 @@ impl ResourceManager {
                 time_to_allocate: Duration::from_secs(60), // Longer setup time
             });
         }
-        
+
         alternatives
     }
 
     // Helper methods for performance estimation
-    fn calculate_estimated_success_rate(&self, executor: &ExecutorInfo, similar_tasks: &[TaskHistory]) -> f64 {
+    fn calculate_estimated_success_rate(
+        &self,
+        executor: &ExecutorInfo,
+        similar_tasks: &[TaskHistory],
+    ) -> f64 {
         if similar_tasks.is_empty() {
             return executor.performance.success_rate;
         }
-        
+
         let total_success: f64 = similar_tasks.iter().map(|t| t.success_rate).sum();
         total_success / similar_tasks.len() as f64
     }
@@ -792,43 +829,55 @@ impl ResourceManager {
         if similar_tasks.is_empty() {
             return executor.performance.avg_latency_ms;
         }
-        
-        let avg_latency: f64 = similar_tasks.iter().map(|t| t.latency_ms as f64).sum::<f64>() / similar_tasks.len() as f64;
-        
+
+        let avg_latency: f64 = similar_tasks
+            .iter()
+            .map(|t| t.latency_ms as f64)
+            .sum::<f64>()
+            / similar_tasks.len() as f64;
+
         // Adjust based on resource requirements
         let resource_factor = self.calculate_resource_factor(requirements);
         (avg_latency * resource_factor) as u32
     }
 
-    fn calculate_estimated_throughput(&self, executor: &ExecutorInfo, similar_tasks: &[TaskHistory]) -> f64 {
+    fn calculate_estimated_throughput(
+        &self,
+        executor: &ExecutorInfo,
+        similar_tasks: &[TaskHistory],
+    ) -> f64 {
         if similar_tasks.is_empty() {
             return executor.performance.throughput_tps;
         }
-        
-        let avg_throughput: f64 = similar_tasks.iter().map(|t| t.throughput_tps).sum::<f64>() / similar_tasks.len() as f64;
+
+        let avg_throughput: f64 = similar_tasks.iter().map(|t| t.throughput_tps).sum::<f64>()
+            / similar_tasks.len() as f64;
         avg_throughput
     }
 
-    fn calculate_resource_utilization(&self, requirements: &ResourceRequirements) -> f64 {
-        let pool = self.resource_pool.lock().unwrap();
+    fn calculate_resource_utilization(
+        &self,
+        requirements: &ResourceRequirements,
+        pool: &ResourcePool,
+    ) -> f64 {
         let total_cpu = pool.available_cpu_cores as f64;
         let total_memory = pool.available_memory_mb as f64;
-        
+
         let cpu_util = requirements.cpu_cores as f64 / total_cpu;
         let memory_util = requirements.memory_mb as f64 / total_memory;
-        
+
         (cpu_util + memory_util) / 2.0
     }
 
-    fn calculate_cost_efficiency(&self, executor: &ExecutorInfo, requirements: &ResourceRequirements) -> f64 {
+    fn calculate_cost_efficiency(
+        &self,
+        executor: &ExecutorInfo,
+        requirements: &ResourceRequirements,
+    ) -> f64 {
         let cost = self.estimate_resource_cost(requirements, Duration::from_secs(3600)); // Hourly cost
         let value = executor.performance.success_rate * executor.performance.throughput_tps;
-        
-        if cost > 0.0 {
-            value / cost
-        } else {
-            1.0
-        }
+
+        if cost > 0.0 { value / cost } else { 1.0 }
     }
 
     fn calculate_resource_factor(&self, requirements: &ResourceRequirements) -> f64 {
@@ -836,27 +885,34 @@ impl ResourceManager {
         let base_factor = 1.0;
         let cpu_factor = 1.0 / (requirements.cpu_cores as f64).sqrt();
         let memory_factor = 1.0 / (requirements.memory_mb as f64 / 1024.0).sqrt();
-        
+
         base_factor * cpu_factor * memory_factor
     }
 
-    fn calculate_performance_difference(&self, request: &ResourceRequest, estimated: &EstimatedPerformance) -> f64 {
+    fn calculate_performance_difference(
+        &self,
+        request: &ResourceRequest,
+        estimated: &EstimatedPerformance,
+    ) -> f64 {
         let target_success = request.quality_requirements.min_success_rate;
         let target_latency = request.quality_requirements.max_latency_ms as f64;
-        
+
         let success_diff = (estimated.success_rate - target_success).abs();
         let latency_diff = (estimated.latency_ms as f64 - target_latency).abs() / target_latency;
-        
+
         (success_diff + latency_diff) / 2.0
     }
 
-    fn reduce_resource_requirements(&self, requirements: &ResourceRequirements) -> Option<ResourceRequirements> {
+    fn reduce_resource_requirements(
+        &self,
+        requirements: &ResourceRequirements,
+    ) -> Option<ResourceRequirements> {
         let mut reduced = requirements.clone();
-        
+
         // Try reducing by 25%
         reduced.cpu_cores = (reduced.cpu_cores as f64 * 0.75).ceil() as u32;
         reduced.memory_mb = (reduced.memory_mb as f64 * 0.75).ceil() as u32;
-        
+
         if reduced.cpu_cores >= 1 && reduced.memory_mb >= 512 {
             Some(reduced)
         } else {
@@ -867,7 +923,7 @@ impl ResourceManager {
     fn estimate_scaling_time(&self, recommendations: &[ScalingRecommendation]) -> Duration {
         // Estimate scaling time based on recommendation type
         let mut total_time = Duration::from_secs(0);
-        
+
         for rec in recommendations {
             match rec.recommendation_type {
                 ScalingRecommendationType::ScaleOut => {
@@ -879,11 +935,14 @@ impl ResourceManager {
                 _ => {}
             }
         }
-        
+
         total_time
     }
 
-    fn get_scaled_resources(&self, recommendations: &[ScalingRecommendation]) -> ResourceRequirements {
+    fn get_scaled_resources(
+        &self,
+        recommendations: &[ScalingRecommendation],
+    ) -> ResourceRequirements {
         // Get resources from first scaling recommendation
         if let Some(rec) = recommendations.first() {
             rec.resource_requirements.clone()
@@ -926,11 +985,12 @@ impl ResourceManager {
         resources: &ResourceRequirements,
     ) -> EstimatedPerformance {
         // Simplified estimation for alternatives
+        let pool = self.resource_pool.lock().unwrap();
         EstimatedPerformance {
             success_rate: request.quality_requirements.min_success_rate * 0.9, // 10% reduction
-            latency_ms: request.quality_requirements.max_latency_ms * 2, // Double latency
+            latency_ms: request.quality_requirements.max_latency_ms * 2,       // Double latency
             throughput_tps: 5.0, // Conservative estimate
-            resource_utilization: self.calculate_resource_utilization(resources),
+            resource_utilization: self.calculate_resource_utilization(resources, &pool),
             cost_efficiency: 0.7, // Lower efficiency
         }
     }
@@ -942,26 +1002,26 @@ impl ResourceManager {
         budget_utilization: f64,
     ) -> Vec<ResourceRecommendation> {
         let mut recommendations = Vec::new();
-        
+
         // CPU recommendations
         if utilization.cpu_utilization > 0.8 {
             recommendations.push(ResourceRecommendation::IncreaseCpu);
         } else if utilization.cpu_utilization < 0.3 {
             recommendations.push(ResourceRecommendation::DecreaseCpu);
         }
-        
+
         // Memory recommendations
         if utilization.memory_utilization > 0.8 {
             recommendations.push(ResourceRecommendation::IncreaseMemory);
         } else if utilization.memory_utilization < 0.3 {
             recommendations.push(ResourceRecommendation::DecreaseMemory);
         }
-        
+
         // Budget-aware recommendations
         if budget_utilization > 0.9 {
             recommendations.push(ResourceRecommendation::OptimizeForCost);
         }
-        
+
         recommendations
     }
 
@@ -971,7 +1031,7 @@ impl ResourceManager {
         utilization: &UtilizationBreakdown,
     ) -> Vec<ScalingRecommendation> {
         let mut recommendations = Vec::new();
-        
+
         // Check for periodic patterns
         if patterns.has_periodic_pattern {
             recommendations.push(ScalingRecommendation {
@@ -979,7 +1039,7 @@ impl ResourceManager {
                 resource_requirements: ResourceRequirements::default(),
             });
         }
-        
+
         // Check for growth trends
         if patterns.has_growth_trend {
             recommendations.push(ScalingRecommendation {
@@ -987,7 +1047,7 @@ impl ResourceManager {
                 resource_requirements: ResourceRequirements::default(),
             });
         }
-        
+
         // Check for high utilization (upscaling)
         if utilization.cpu_utilization > 0.9 || utilization.memory_utilization > 0.9 {
             recommendations.push(ScalingRecommendation {
@@ -1001,7 +1061,7 @@ impl ResourceManager {
                 },
             });
         }
-        
+
         // Check for low utilization (downscaling)
         if utilization.cpu_utilization < 0.3 && utilization.memory_utilization < 0.3 {
             recommendations.push(ScalingRecommendation {
@@ -1015,7 +1075,7 @@ impl ResourceManager {
                 },
             });
         }
-        
+
         // Check for sustained low utilization (vertical downscaling)
         if patterns.has_low_utilization_periods && utilization.cpu_utilization < 0.2 {
             recommendations.push(ScalingRecommendation {
@@ -1029,7 +1089,7 @@ impl ResourceManager {
                 },
             });
         }
-        
+
         recommendations
     }
 
@@ -1039,19 +1099,19 @@ impl ResourceManager {
         budget_utilization: f64,
     ) -> Vec<CostOptimization> {
         let mut optimizations = Vec::new();
-        
+
         if patterns.has_low_utilization_periods {
             optimizations.push(CostOptimization::UseSpotInstances);
         }
-        
+
         if budget_utilization > 0.8 {
             optimizations.push(CostOptimization::ReserveInstances);
         }
-        
+
         if patterns.has_predictable_pattern {
             optimizations.push(CostOptimization::ScheduleShutdown);
         }
-        
+
         optimizations
     }
 }
@@ -1096,18 +1156,19 @@ impl ResourcePool {
         // Allocate resources
         self.available_cpu_cores -= requirements.cpu_cores;
         self.available_memory_mb -= requirements.memory_mb;
-        
-        if let Some(req_gpu) = requirements.gpu_memory_mb {
-            if let Some(available_gpu) = &mut self.available_gpu_memory_mb {
-                *available_gpu -= req_gpu;
-            }
+
+        if let Some(req_gpu) = requirements.gpu_memory_mb
+            && let Some(available_gpu) = &mut self.available_gpu_memory_mb
+        {
+            *available_gpu -= req_gpu;
         }
-        
+
         self.available_disk_mb -= requirements.disk_mb;
         self.available_network_mbps -= requirements.network_mbps;
 
         // Record allocation
-        self.allocated_resources.insert(executor_id.to_string(), requirements.clone());
+        self.allocated_resources
+            .insert(executor_id.to_string(), requirements.clone());
 
         Some(requirements.clone())
     }
@@ -1118,13 +1179,13 @@ impl ResourcePool {
             // Return resources to pool
             self.available_cpu_cores += allocated.cpu_cores;
             self.available_memory_mb += allocated.memory_mb;
-            
-            if let Some(allocated_gpu) = allocated.gpu_memory_mb {
-                if let Some(available_gpu) = &mut self.available_gpu_memory_mb {
-                    *available_gpu += allocated_gpu;
-                }
+
+            if let Some(allocated_gpu) = allocated.gpu_memory_mb
+                && let Some(available_gpu) = &mut self.available_gpu_memory_mb
+            {
+                *available_gpu += allocated_gpu;
             }
-            
+
             self.available_disk_mb += allocated.disk_mb;
             self.available_network_mbps += allocated.network_mbps;
         }
@@ -1135,11 +1196,11 @@ impl ResourcePool {
         if self.available_cpu_cores < requirements.cpu_cores {
             return false;
         }
-        
+
         if self.available_memory_mb < requirements.memory_mb {
             return false;
         }
-        
+
         if let Some(req_gpu) = requirements.gpu_memory_mb {
             if let Some(available_gpu) = self.available_gpu_memory_mb {
                 if available_gpu < req_gpu {
@@ -1149,15 +1210,15 @@ impl ResourcePool {
                 return false; // GPU requested but not available
             }
         }
-        
+
         if self.available_disk_mb < requirements.disk_mb {
             return false;
         }
-        
+
         if self.available_network_mbps < requirements.network_mbps {
             return false;
         }
-        
+
         true
     }
 
@@ -1171,16 +1232,16 @@ impl ResourcePool {
         self.available_cpu_cores = max_cpu_cores;
         self.available_memory_mb = max_memory_mb;
         self.available_gpu_memory_mb = max_gpu_memory_mb;
-        
+
         // Recalculate available resources based on current allocations
         for allocated in self.allocated_resources.values() {
             self.available_cpu_cores -= allocated.cpu_cores;
             self.available_memory_mb -= allocated.memory_mb;
-            
-            if let Some(allocated_gpu) = allocated.gpu_memory_mb {
-                if let Some(available_gpu) = &mut self.available_gpu_memory_mb {
-                    *available_gpu -= allocated_gpu;
-                }
+
+            if let Some(allocated_gpu) = allocated.gpu_memory_mb
+                && let Some(available_gpu) = &mut self.available_gpu_memory_mb
+            {
+                *available_gpu -= allocated_gpu;
             }
         }
     }
@@ -1189,7 +1250,7 @@ impl ResourcePool {
     pub fn get_cpu_utilization(&self) -> f64 {
         let total_allocated: u32 = self.allocated_resources.values().map(|r| r.cpu_cores).sum();
         let total = self.available_cpu_cores + total_allocated;
-        
+
         if total > 0 {
             total_allocated as f64 / total as f64
         } else {
@@ -1201,7 +1262,7 @@ impl ResourcePool {
     pub fn get_memory_utilization(&self) -> f64 {
         let total_allocated: u32 = self.allocated_resources.values().map(|r| r.memory_mb).sum();
         let total = self.available_memory_mb + total_allocated;
-        
+
         if total > 0 {
             total_allocated as f64 / total as f64
         } else {
@@ -1211,10 +1272,12 @@ impl ResourcePool {
 
     /// Get GPU utilization (0.0 to 1.0).
     pub fn get_gpu_utilization(&self) -> f64 {
-        let total_allocated: u32 = self.allocated_resources.values()
+        let total_allocated: u32 = self
+            .allocated_resources
+            .values()
             .filter_map(|r| r.gpu_memory_mb)
             .sum();
-        
+
         if let Some(total_gpu) = self.available_gpu_memory_mb {
             let total = total_gpu + total_allocated;
             if total > 0 {
@@ -1229,9 +1292,13 @@ impl ResourcePool {
 
     /// Get network utilization (0.0 to 1.0).
     pub fn get_network_utilization(&self) -> f64 {
-        let total_allocated: u32 = self.allocated_resources.values().map(|r| r.network_mbps).sum();
+        let total_allocated: u32 = self
+            .allocated_resources
+            .values()
+            .map(|r| r.network_mbps)
+            .sum();
         let total = self.available_network_mbps + total_allocated;
-        
+
         if total > 0 {
             total_allocated as f64 / total as f64
         } else {
@@ -1245,9 +1312,9 @@ impl ResourcePool {
         let memory_util = self.get_memory_utilization();
         let gpu_util = self.get_gpu_utilization();
         let network_util = self.get_network_utilization();
-        
+
         // Weighted average with CPU and memory having higher weights
-        (cpu_util * 0.4 + memory_util * 0.4 + gpu_util * 0.1 + network_util * 0.1)
+        cpu_util * 0.4 + memory_util * 0.4 + gpu_util * 0.1 + network_util * 0.1
     }
 
     /// Get utilization breakdown.
@@ -1278,7 +1345,12 @@ impl PerformanceHistory {
     }
 
     /// Record a resource allocation.
-    pub fn record_allocation(&mut self, request: &ResourceRequest, resources: &ResourceRequirements, cost: f64) {
+    pub fn record_allocation(
+        &mut self,
+        request: &ResourceRequest,
+        resources: &ResourceRequirements,
+        cost: f64,
+    ) {
         self.record_metrics(0.5, 0.5, 0.3, 0.2, 1.0, 1000, 0.95);
     }
 
@@ -1341,15 +1413,13 @@ impl PerformanceHistory {
     /// Find similar tasks in history.
     pub fn find_similar_tasks(&self, task_type: &str, domain: &str) -> Vec<TaskHistory> {
         // Simplified implementation - in real system would query actual history
-        vec![
-            TaskHistory {
-                task_type: task_type.to_string(),
-                domain: domain.to_string(),
-                success_rate: 0.95,
-                latency_ms: 1000,
-                throughput_tps: 5.0,
-            }
-        ]
+        vec![TaskHistory {
+            task_type: task_type.to_string(),
+            domain: domain.to_string(),
+            success_rate: 0.95,
+            latency_ms: 1000,
+            throughput_tps: 5.0,
+        }]
     }
 
     /// Get utilization trends.
@@ -1361,19 +1431,17 @@ impl PerformanceHistory {
         // Calculate simple moving average of CPU utilization
         let window_size = 10.min(self.cpu_utilization.len());
         let start = self.cpu_utilization.len() - window_size;
-        
-        self.cpu_utilization[start..]
-            .iter()
-            .map(|&x| x)
-            .collect()
+
+        self.cpu_utilization[start..].to_vec()
     }
 
     /// Analyze patterns in historical data.
     pub fn analyze_patterns(&self) -> PatternAnalysis {
         PatternAnalysis {
             has_periodic_pattern: self.cpu_utilization.len() > 100,
-            has_growth_trend: self.cpu_utilization.len() > 50 && 
-                self.cpu_utilization.last().unwrap_or(&0.0) > self.cpu_utilization.first().unwrap_or(&0.0),
+            has_growth_trend: self.cpu_utilization.len() > 50
+                && self.cpu_utilization.last().unwrap_or(&0.0)
+                    > self.cpu_utilization.first().unwrap_or(&0.0),
             has_low_utilization_periods: self.cpu_utilization.iter().any(|&x| x < 0.2),
             has_predictable_pattern: self.cpu_utilization.len() > 200,
         }
@@ -1400,7 +1468,8 @@ impl BudgetTracker {
     /// Allocate budget for a resource.
     pub fn allocate(&mut self, cost: f64, description: &str) {
         self.spent_amount += cost;
-        self.spending_history.push((Instant::now(), cost, description.to_string()));
+        self.spending_history
+            .push((Instant::now(), cost, description.to_string()));
     }
 
     /// Get budget utilization (0.0 to 1.0).
@@ -1444,10 +1513,11 @@ impl ScalingController {
         budget_utilization: f64,
     ) -> Vec<ScalingOperation> {
         let mut operations = Vec::new();
-        
+
         // Check for scale out (upscaling)
-        if metrics.cpu_utilization > self.thresholds.scale_up_cpu_threshold &&
-           budget_utilization < self.thresholds.budget_threshold {
+        if metrics.cpu_utilization > self.thresholds.scale_up_cpu_threshold
+            && budget_utilization < self.thresholds.budget_threshold
+        {
             operations.push(ScalingOperation {
                 operation_type: ScalingOperationType::ScaleOut,
                 domain: "general".to_string(),
@@ -1456,10 +1526,11 @@ impl ScalingController {
                 resource_requirements: ResourceRequirements::default(),
             });
         }
-        
+
         // Check for scale in (downscaling)
-        if metrics.cpu_utilization < self.thresholds.scale_down_cpu_threshold &&
-           metrics.memory_utilization < self.thresholds.scale_down_memory_threshold {
+        if metrics.cpu_utilization < self.thresholds.scale_down_cpu_threshold
+            && metrics.memory_utilization < self.thresholds.scale_down_memory_threshold
+        {
             operations.push(ScalingOperation {
                 operation_type: ScalingOperationType::ScaleIn,
                 domain: "general".to_string(),
@@ -1468,7 +1539,7 @@ impl ScalingController {
                 resource_requirements: ResourceRequirements::default(),
             });
         }
-        
+
         operations
     }
 
@@ -1480,9 +1551,10 @@ impl ScalingController {
         budget_utilization: f64,
     ) -> Vec<ScalingOperation> {
         let mut operations = Vec::new();
-        
-        if metrics.cpu_utilization > self.thresholds.scale_up_cpu_threshold &&
-           budget_utilization < self.thresholds.budget_threshold {
+
+        if metrics.cpu_utilization > self.thresholds.scale_up_cpu_threshold
+            && budget_utilization < self.thresholds.budget_threshold
+        {
             operations.push(ScalingOperation {
                 operation_type: ScalingOperationType::ScaleUp,
                 domain: "general".to_string(),
@@ -1497,7 +1569,7 @@ impl ScalingController {
                 },
             });
         }
-        
+
         operations
     }
 
@@ -1509,14 +1581,16 @@ impl ScalingController {
         budget_utilization: f64,
     ) -> Vec<ScalingOperation> {
         let mut operations = Vec::new();
-        
+
         // Combine horizontal and vertical scaling logic
-        let horizontal_ops = self.check_horizontal_scaling(metrics, recommendations, budget_utilization);
-        let vertical_ops = self.check_vertical_scaling(metrics, recommendations, budget_utilization);
-        
+        let horizontal_ops =
+            self.check_horizontal_scaling(metrics, recommendations, budget_utilization);
+        let vertical_ops =
+            self.check_vertical_scaling(metrics, recommendations, budget_utilization);
+
         operations.extend(horizontal_ops);
         operations.extend(vertical_ops);
-        
+
         operations
     }
 
@@ -1528,7 +1602,7 @@ impl ScalingController {
         budget_utilization: f64,
     ) -> Vec<ScalingOperation> {
         let mut operations = Vec::new();
-        
+
         // Burstable scaling: quick scale out for short bursts
         if metrics.cpu_utilization > 0.9 && budget_utilization < 0.7 {
             operations.push(ScalingOperation {
@@ -1545,7 +1619,7 @@ impl ScalingController {
                 },
             });
         }
-        
+
         operations
     }
 
@@ -1557,7 +1631,7 @@ impl ScalingController {
         budget_utilization: f64,
     ) -> Vec<ScalingOperation> {
         let mut operations = Vec::new();
-        
+
         // Spot scaling: scale out when budget is low but need is high
         if metrics.cpu_utilization > 0.8 && budget_utilization > 0.5 {
             operations.push(ScalingOperation {
@@ -1574,7 +1648,7 @@ impl ScalingController {
                 },
             });
         }
-        
+
         operations
     }
 
@@ -1732,7 +1806,11 @@ impl ScalingResult {
         Self {
             operation,
             success,
-            error_message: if success { None } else { Some("Operation failed".to_string()) },
+            error_message: if success {
+                None
+            } else {
+                Some("Operation failed".to_string())
+            },
         }
     }
 }

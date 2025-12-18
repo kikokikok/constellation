@@ -3,10 +3,9 @@
 //! Provides key lifecycle management, rotation policies, and key versioning
 //! for cryptographic operations.
 
-use crate::mcp::crypto::{CryptoError, KeyMetadata, KeyStore, KeyUsage, PrivateKey, PublicKey};
+use crate::mcp::crypto::{CryptoError, KeyMetadata, KeyUsage, PrivateKey};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
-use uuid::Uuid;
 
 /// Key rotation policy.
 #[derive(Debug, Clone)]
@@ -148,7 +147,7 @@ impl KeyManager {
         // Store version
         self.key_versions
             .entry(key_type.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(version);
 
         // Initialize usage counter
@@ -380,9 +379,7 @@ impl KeyManager {
         };
 
         // Add to key store
-        self.crypto
-            .key_store_mut()
-            .add_private_key(private_key);
+        self.crypto.key_store_mut().add_private_key(private_key);
         self.crypto
             .key_store_mut()
             .add_metadata(key_export.key_id.clone(), key_export.metadata);
@@ -390,7 +387,7 @@ impl KeyManager {
         // Add version
         self.key_versions
             .entry(key_export.algorithm.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(version);
 
         Ok(())
@@ -511,7 +508,7 @@ pub struct KeyExport {
 impl Default for KeyRotationPolicy {
     fn default() -> Self {
         Self {
-            max_lifetime: Duration::days(90), // 90 days
+            max_lifetime: Duration::days(90),  // 90 days
             warning_period: Duration::days(7), // 7 days warning
             auto_rotate: true,
             keep_old_keys: true,
@@ -554,8 +551,12 @@ mod tests {
         let mut manager = KeyManager::new()?;
 
         // Generate initial key
-        let (_key1_private, _) =
-            manager.generate_key("encryption", "AES-256-GCM", "test_user", KeyUsage::Encryption)?;
+        let (_key1_private, _) = manager.generate_key(
+            "encryption",
+            "AES-256-GCM",
+            "test_user",
+            KeyUsage::Encryption,
+        )?;
 
         // Rotate the key
         let (_key2_private, _) = manager.rotate_key(
@@ -601,7 +602,8 @@ mod tests {
         manager.set_rotation_policy("test".to_string(), policy);
 
         // Generate a key
-        let (key_id, _) = manager.generate_key("test", "Ed25519", "test_user", KeyUsage::Signing)?;
+        let (key_id, _) =
+            manager.generate_key("test", "Ed25519", "test_user", KeyUsage::Signing)?;
 
         // Wait a bit
         std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -621,7 +623,8 @@ mod tests {
         let mut manager = KeyManager::new()?;
 
         // Generate a key
-        let (key_id, _) = manager.generate_key("signing", "Ed25519", "test_user", KeyUsage::Signing)?;
+        let (key_id, _) =
+            manager.generate_key("signing", "Ed25519", "test_user", KeyUsage::Signing)?;
 
         // Record usage
         manager.record_usage(&key_id);
@@ -641,7 +644,8 @@ mod tests {
         let mut manager = KeyManager::new()?;
 
         // Generate a key
-        let (key_id, _) = manager.generate_key("signing", "Ed25519", "test_user", KeyUsage::Signing)?;
+        let (key_id, _) =
+            manager.generate_key("signing", "Ed25519", "test_user", KeyUsage::Signing)?;
 
         // Export the key
         let export = manager.export_key(&key_id)?;

@@ -6,13 +6,14 @@
 use crate::models::hybrid_agent::{
     FallbackAction, FallbackStrategy, FallbackTrigger, HybridAgentConfig,
 };
+use dashmap::DashMap;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 /// Task status.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TaskStatus {
     Pending,
     Assigned,
@@ -45,7 +46,7 @@ pub struct TaskAssignment {
 }
 
 /// Resource allocation for a task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResourceAllocation {
     /// CPU cores.
     pub cpu_cores: u32,
@@ -61,7 +62,7 @@ pub struct ResourceAllocation {
 }
 
 /// Task result.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TaskResult {
     /// Task ID.
     pub task_id: Uuid,
@@ -95,7 +96,7 @@ pub struct TaskResult {
 }
 
 /// Resource usage for a task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResourceUsage {
     /// CPU usage in core-seconds.
     pub cpu_core_seconds: f64,
@@ -108,6 +109,17 @@ pub struct ResourceUsage {
 
     /// Network usage in MB.
     pub network_mb: f64,
+}
+
+impl Default for ResourceUsage {
+    fn default() -> Self {
+        Self {
+            cpu_core_seconds: 0.0,
+            memory_mb_seconds: 0.0,
+            gpu_memory_mb_seconds: None,
+            network_mb: 0.0,
+        }
+    }
 }
 
 /// Performance metrics.
@@ -145,7 +157,7 @@ pub struct LlmStrategistCoordinator {
     task_queue: Arc<Mutex<Vec<Task>>>,
 
     /// Active tasks.
-    active_tasks: Arc<Mutex<HashMap<Uuid, TaskAssignment>>>,
+    active_tasks: DashMap<Uuid, TaskAssignment>,
 
     /// Completed tasks.
     completed_tasks: Arc<Mutex<Vec<TaskResult>>>,
@@ -154,7 +166,7 @@ pub struct LlmStrategistCoordinator {
     performance_metrics: Arc<Mutex<PerformanceMetrics>>,
 
     /// Executor status.
-    executor_status: Arc<Mutex<HashMap<String, ExecutorStatus>>>,
+    executor_status: DashMap<String, ExecutorStatus>,
 
     /// Fallback strategies.
     fallback_strategies: Vec<FallbackStrategy>,
@@ -167,7 +179,7 @@ pub struct LlmStrategistCoordinator {
 }
 
 /// Task definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Task {
     /// Task ID.
     pub id: Uuid,
@@ -178,8 +190,26 @@ pub struct Task {
     /// Input data.
     pub input: Value,
 
+    /// Expected output (optional).
+    pub expected_output: Option<Value>,
+
+    /// Assigned agent (optional).
+    pub assigned_to: Option<String>,
+
     /// Priority.
     pub priority: u32,
+
+    /// Timeout in milliseconds.
+    pub timeout_ms: u32,
+
+    /// Created time.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+
+    /// Task status.
+    pub status: TaskStatus,
+
+    /// Task metadata.
+    pub metadata: HashMap<String, Value>,
 
     /// Deadline.
     pub deadline: Option<chrono::DateTime<chrono::Utc>>,
@@ -192,13 +222,10 @@ pub struct Task {
 
     /// Resource requirements.
     pub resource_requirements: ResourceRequirements,
-
-    /// Created time.
-    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Resource requirements for a task.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ResourceRequirements {
     /// Minimum CPU cores.
     pub min_cpu_cores: u32,
@@ -211,6 +238,17 @@ pub struct ResourceRequirements {
 
     /// Network bandwidth in Mbps.
     pub network_mbps: u32,
+}
+
+impl Default for ResourceRequirements {
+    fn default() -> Self {
+        Self {
+            min_cpu_cores: 1,
+            min_memory_mb: 1024,
+            gpu_memory_mb: None,
+            network_mbps: 10,
+        }
+    }
 }
 
 /// Executor status.
@@ -260,10 +298,10 @@ impl LlmStrategistCoordinator {
         Self {
             config,
             task_queue: Arc::new(Mutex::new(Vec::new())),
-            active_tasks: Arc::new(Mutex::new(HashMap::new())),
+            active_tasks: DashMap::new(),
             completed_tasks: Arc::new(Mutex::new(Vec::new())),
             performance_metrics: Arc::new(Mutex::new(performance_metrics)),
-            executor_status: Arc::new(Mutex::new(HashMap::new())),
+            executor_status: DashMap::new(),
             fallback_strategies: Vec::new(),
             total_budget_spent: Arc::new(Mutex::new(0.0)),
             total_tasks_processed: Arc::new(Mutex::new(0)),
@@ -290,14 +328,13 @@ impl LlmStrategistCoordinator {
     /// Assign tasks to executors.
     pub fn assign_tasks(&self) -> Result<Vec<TaskAssignment>, String> {
         let mut queue = self.task_queue.lock().unwrap();
-        let mut active_tasks = self.active_tasks.lock().unwrap();
-        let executor_status = self.executor_status.lock().unwrap();
         let mut assignments = Vec::new();
 
         // Get available executors
-        let available_executors: Vec<&ExecutorStatus> = executor_status
-            .values()
-            .filter(|status| status.is_available && status.available_capacity > 0)
+        let available_executors: Vec<ExecutorStatus> = self
+            .executor_status
+            .iter()
+            .map(|entry| entry.value().clone())
             .collect();
 
         if available_executors.is_empty() {
@@ -307,33 +344,17 @@ impl LlmStrategistCoordinator {
         // Assign tasks based on strategy
         match self.config.coordination.strategy_type {
             crate::models::hybrid_agent::CoordinationStrategyType::Hierarchical => {
-                assignments = self.assign_hierarchical(
-                    &mut queue,
-                    &mut active_tasks,
-                    &available_executors,
-                )?;
+                assignments = self.assign_hierarchical(&mut queue, &available_executors)?;
             }
             crate::models::hybrid_agent::CoordinationStrategyType::Collaborative => {
-                assignments = self.assign_collaborative(
-                    &mut queue,
-                    &mut active_tasks,
-                    &available_executors,
-                )?;
+                assignments = self.assign_collaborative(&mut queue, &available_executors)?;
             }
             crate::models::hybrid_agent::CoordinationStrategyType::MarketBased => {
-                assignments = self.assign_market_based(
-                    &mut queue,
-                    &mut active_tasks,
-                    &available_executors,
-                )?;
+                assignments = self.assign_market_based(&mut queue, &available_executors)?;
             }
             _ => {
                 // Default to hierarchical
-                assignments = self.assign_hierarchical(
-                    &mut queue,
-                    &mut active_tasks,
-                    &available_executors,
-                )?;
+                assignments = self.assign_hierarchical(&mut queue, &available_executors)?;
             }
         }
 
@@ -344,8 +365,7 @@ impl LlmStrategistCoordinator {
     fn assign_hierarchical(
         &self,
         queue: &mut Vec<Task>,
-        active_tasks: &mut HashMap<Uuid, TaskAssignment>,
-        available_executors: &[&ExecutorStatus],
+        available_executors: &[ExecutorStatus],
     ) -> Result<Vec<TaskAssignment>, String> {
         let mut assignments = Vec::new();
         let now = chrono::Utc::now();
@@ -358,7 +378,7 @@ impl LlmStrategistCoordinator {
                 break;
             }
 
-            let executor = available_executors[executor_index];
+            let executor = &available_executors[executor_index];
             let assignment = TaskAssignment {
                 task_id: task.id,
                 executor_id: executor.executor_id.clone(),
@@ -375,7 +395,7 @@ impl LlmStrategistCoordinator {
             };
 
             assignments.push(assignment.clone());
-            active_tasks.insert(task.id, assignment);
+            self.active_tasks.insert(task.id, assignment);
 
             // Remove from queue
             // We'll mark it for removal and collect indices
@@ -393,8 +413,7 @@ impl LlmStrategistCoordinator {
     fn assign_collaborative(
         &self,
         queue: &mut Vec<Task>,
-        active_tasks: &mut HashMap<Uuid, TaskAssignment>,
-        available_executors: &[&ExecutorStatus],
+        available_executors: &[ExecutorStatus],
     ) -> Result<Vec<TaskAssignment>, String> {
         let mut assignments = Vec::new();
         let now = chrono::Utc::now();
@@ -413,11 +432,7 @@ impl LlmStrategistCoordinator {
                     a.current_load
                         .partial_cmp(&b.current_load)
                         .unwrap()
-                        .then(
-                            b.success_rate
-                                .partial_cmp(&a.success_rate)
-                                .unwrap(),
-                        )
+                        .then(b.success_rate.partial_cmp(&a.success_rate).unwrap())
                         .then(a.cost_per_task.partial_cmp(&b.cost_per_task).unwrap())
                 });
 
@@ -438,7 +453,7 @@ impl LlmStrategistCoordinator {
                 };
 
                 assignments.push(assignment.clone());
-                active_tasks.insert(task.id, assignment);
+                self.active_tasks.insert(task.id, assignment);
             }
         }
 
@@ -453,8 +468,7 @@ impl LlmStrategistCoordinator {
     fn assign_market_based(
         &self,
         queue: &mut Vec<Task>,
-        active_tasks: &mut HashMap<Uuid, TaskAssignment>,
-        available_executors: &[&ExecutorStatus],
+        available_executors: &[ExecutorStatus],
     ) -> Result<Vec<TaskAssignment>, String> {
         let mut assignments = Vec::new();
         let now = chrono::Utc::now();
@@ -473,11 +487,7 @@ impl LlmStrategistCoordinator {
                     a.cost_per_task
                         .partial_cmp(&b.cost_per_task)
                         .unwrap()
-                        .then(
-                            b.success_rate
-                                .partial_cmp(&a.success_rate)
-                                .unwrap(),
-                        )
+                        .then(b.success_rate.partial_cmp(&a.success_rate).unwrap())
                 });
 
             if let Some(executor) = best_executor {
@@ -497,7 +507,7 @@ impl LlmStrategistCoordinator {
                 };
 
                 assignments.push(assignment.clone());
-                active_tasks.insert(task.id, assignment);
+                self.active_tasks.insert(task.id, assignment);
             }
         }
 
@@ -510,21 +520,20 @@ impl LlmStrategistCoordinator {
 
     /// Update executor status.
     pub fn update_executor_status(&self, status: ExecutorStatus) -> Result<(), String> {
-        let mut executor_status = self.executor_status.lock().unwrap();
-        executor_status.insert(status.executor_id.clone(), status);
+        self.executor_status
+            .insert(status.executor_id.clone(), status);
         Ok(())
     }
 
     /// Complete a task.
     pub fn complete_task(&self, result: TaskResult) -> Result<(), String> {
-        let mut active_tasks = self.active_tasks.lock().unwrap();
         let mut completed_tasks = self.completed_tasks.lock().unwrap();
         let mut total_budget_spent = self.total_budget_spent.lock().unwrap();
         let mut total_tasks_processed = self.total_tasks_processed.lock().unwrap();
         let mut performance_metrics = self.performance_metrics.lock().unwrap();
 
         // Remove from active tasks
-        active_tasks.remove(&result.task_id);
+        self.active_tasks.remove(&result.task_id);
 
         // Add to completed tasks
         completed_tasks.push(result.clone());
@@ -561,10 +570,7 @@ impl LlmStrategistCoordinator {
             .iter()
             .map(|r| if r.success { 1.0 } else { 0.0 })
             .sum();
-        let total_quality: f64 = completed_tasks
-            .iter()
-            .map(|r| r.quality_score)
-            .sum();
+        let total_quality: f64 = completed_tasks.iter().map(|r| r.quality_score).sum();
 
         metrics.avg_latency_ms = total_latency / total_tasks;
         metrics.success_rate = total_success / total_tasks;
@@ -600,7 +606,8 @@ impl LlmStrategistCoordinator {
         for strategy in &self.fallback_strategies {
             let trigger = match strategy.trigger {
                 FallbackTrigger::HighLatency => {
-                    metrics.avg_latency_ms > self.config.performance_targets.latency_target_ms as f64
+                    metrics.avg_latency_ms
+                        > self.config.performance_targets.latency_target_ms as f64
                 }
                 FallbackTrigger::LowSuccessRate => {
                     metrics.success_rate < self.config.performance_targets.success_rate_target
@@ -613,7 +620,11 @@ impl LlmStrategistCoordinator {
                 }
                 FallbackTrigger::BudgetExceeded => {
                     let budget_spent = *self.total_budget_spent.lock().unwrap();
-                    let total_budget = self.config.resource_allocation.budget_allocation.total_budget;
+                    let total_budget = self
+                        .config
+                        .resource_allocation
+                        .budget_allocation
+                        .total_budget;
                     budget_spent > total_budget * 0.8 // More than 80% of budget spent
                 }
                 FallbackTrigger::QualityBelowThreshold => {
@@ -624,11 +635,10 @@ impl LlmStrategistCoordinator {
                 }
                 FallbackTrigger::Timeout => {
                     // Check for timed out tasks
-                    let active_tasks = self.active_tasks.lock().unwrap();
                     let now = chrono::Utc::now();
-                    active_tasks.values().any(|assignment| {
-                        now > assignment.estimated_completion
-                    })
+                    self.active_tasks
+                        .iter()
+                        .any(|entry| now > entry.estimated_completion)
                 }
             };
 
@@ -643,12 +653,11 @@ impl LlmStrategistCoordinator {
     /// Get queue statistics.
     pub fn get_queue_stats(&self) -> QueueStats {
         let queue = self.task_queue.lock().unwrap();
-        let active_tasks = self.active_tasks.lock().unwrap();
         let completed_tasks = self.completed_tasks.lock().unwrap();
 
         QueueStats {
             pending_tasks: queue.len(),
-            active_tasks: active_tasks.len(),
+            active_tasks: self.active_tasks.len(),
             completed_tasks: completed_tasks.len(),
             total_tasks_processed: *self.total_tasks_processed.lock().unwrap(),
             total_budget_spent: *self.total_budget_spent.lock().unwrap(),
@@ -657,17 +666,19 @@ impl LlmStrategistCoordinator {
 
     /// Get executor statistics.
     pub fn get_executor_stats(&self) -> Vec<ExecutorStats> {
-        let executor_status = self.executor_status.lock().unwrap();
-        executor_status
-            .values()
-            .map(|status| ExecutorStats {
-                executor_id: status.executor_id.clone(),
-                current_load: status.current_load,
-                available_capacity: status.available_capacity,
-                success_rate: status.success_rate,
-                quality_score: status.quality_score,
-                cost_per_task: status.cost_per_task,
-                is_available: status.is_available,
+        self.executor_status
+            .iter()
+            .map(|entry| {
+                let status = entry.value();
+                ExecutorStats {
+                    executor_id: entry.key().clone(),
+                    current_load: status.current_load,
+                    available_capacity: status.available_capacity,
+                    success_rate: status.success_rate,
+                    quality_score: status.quality_score,
+                    cost_per_task: status.cost_per_task,
+                    is_available: status.is_available,
+                }
             })
             .collect()
     }
@@ -723,7 +734,13 @@ impl Default for Task {
             id: Uuid::new_v4(),
             task_type: "default".to_string(),
             input: Value::Null,
+            expected_output: None,
+            assigned_to: None,
             priority: 50,
+            timeout_ms: 30000,
+            created_at: chrono::Utc::now(),
+            status: TaskStatus::Pending,
+            metadata: HashMap::new(),
             deadline: None,
             quality_requirement: 0.8,
             budget_allocation: 1.0,
@@ -733,7 +750,6 @@ impl Default for Task {
                 gpu_memory_mb: None,
                 network_mbps: 10,
             },
-            created_at: chrono::Utc::now(),
         }
     }
 }
@@ -807,7 +823,12 @@ impl ExecutorStatus {
     }
 
     /// Update with performance metrics.
-    pub fn with_performance(mut self, success_rate: f64, quality_score: f64, avg_latency_ms: f64) -> Self {
+    pub fn with_performance(
+        mut self,
+        success_rate: f64,
+        quality_score: f64,
+        avg_latency_ms: f64,
+    ) -> Self {
         self.success_rate = success_rate.clamp(0.0, 1.0);
         self.quality_score = quality_score.clamp(0.0, 1.0);
         self.avg_latency_ms = avg_latency_ms.max(0.0);
@@ -824,5 +845,45 @@ impl ExecutorStatus {
     pub fn with_availability(mut self, available: bool) -> Self {
         self.is_available = available;
         self
+    }
+}
+
+impl Default for ExecutorStats {
+    fn default() -> Self {
+        Self {
+            executor_id: String::new(),
+            current_load: 0.0,
+            available_capacity: 0,
+            success_rate: 0.0,
+            quality_score: 0.0,
+            cost_per_task: 0.0,
+            is_available: false,
+        }
+    }
+}
+
+impl Default for PerformanceMetrics {
+    fn default() -> Self {
+        Self {
+            throughput_tps: 0.0,
+            avg_latency_ms: 0.0,
+            success_rate: 0.0,
+            avg_quality_score: 0.0,
+            resource_utilization: 0.0,
+            cost_efficiency: 0.0,
+            availability: 1.0,
+        }
+    }
+}
+
+impl Default for QueueStats {
+    fn default() -> Self {
+        Self {
+            pending_tasks: 0,
+            active_tasks: 0,
+            completed_tasks: 0,
+            total_tasks_processed: 0,
+            total_budget_spent: 0.0,
+        }
     }
 }

@@ -46,17 +46,17 @@ pub use performance_monitor::{
     Alert, AlertLevel, AlertSubscriber, AlertThresholds, AlertType, CostMetric, CostRecord,
     CostTrigger, NotificationChannel, OptimizationAlgorithm, OptimizationEngine,
     OptimizationResult, PerformanceHistory, PerformanceImpact, PerformanceImprovement,
-    PerformanceMetric, PerformanceMonitor, PerformanceTrends, PerformanceTrigger,
-    PredictionModel, PredictiveScaler, RecurrencePattern, ResourceCost, ResourceUtilization,
-    ScalingEvent, ScalingTrigger, ScalingType, ScheduleTrigger, TrainingSample,
+    PerformanceMetric, PerformanceMonitor, PerformanceTrends, PerformanceTrigger, PredictionModel,
+    PredictiveScaler, RecurrencePattern, ResourceCost, ResourceUtilization, ScalingEvent,
+    ScalingTrigger, ScalingType, ScheduleTrigger, TrainingSample,
 };
 
 pub use resource_manager::{
     AllocationAlternative, AllocationResult, BudgetTracker, EstimatedPerformance,
     HorizontalScalingConfig, HybridScalingConfig, PerformanceHistory as ResourcePerformanceHistory,
     QualityRequirements, ResourceCosts, ResourceManager, ResourcePool, ResourceRequest,
-    ScalingController, ScalingOperation, ScalingOperationType, ScalingResult,
-    UtilizationBreakdown, UtilizationStats, VerticalScalingConfig,
+    ScalingController, ScalingOperation, ScalingOperationType, ScalingResult, UtilizationBreakdown,
+    UtilizationStats, VerticalScalingConfig,
 };
 
 pub use fallback_manager::{

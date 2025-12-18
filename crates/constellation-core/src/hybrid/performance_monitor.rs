@@ -552,7 +552,12 @@ impl PerformanceMonitor {
         self.update_current_metrics(&mut current_metrics, &history);
 
         // Check for alerts
-        self.check_alerts(&current_metrics, &history);
+        let alerts = self.check_alerts(&current_metrics, &history);
+
+        // Add alerts to history
+        for alert in &alerts {
+            history.add_alert(alert.clone());
+        }
 
         // Run optimization if needed
         self.run_optimization_if_needed(&history);
@@ -667,12 +672,6 @@ impl PerformanceMonitor {
         // Notify subscribers
         self.notify_subscribers(&alerts);
 
-        // Add to history
-        let mut history_lock = self.performance_history.lock().unwrap();
-        for alert in &alerts {
-            history_lock.add_alert(alert.clone());
-        }
-
         alerts
     }
 
@@ -743,10 +742,10 @@ impl PerformanceMonitor {
 
         for subscriber in subscribers.iter_mut() {
             // Check cooldown period
-            if let Some(last_notification) = subscriber.last_notification {
-                if now.duration_since(last_notification) < subscriber.cooldown_period {
-                    continue;
-                }
+            if let Some(last_notification) = subscriber.last_notification
+                && now.duration_since(last_notification) < subscriber.cooldown_period
+            {
+                continue;
             }
 
             // Filter alerts for this subscriber
@@ -772,10 +771,10 @@ impl PerformanceMonitor {
         let now = Instant::now();
 
         // Check if it's time for optimization
-        if let Some(last_optimization) = engine.last_optimization {
-            if now.duration_since(last_optimization) < engine.optimization_frequency {
-                return;
-            }
+        if let Some(last_optimization) = engine.last_optimization
+            && now.duration_since(last_optimization) < engine.optimization_frequency
+        {
+            return;
         }
 
         // Check if we have enough data
@@ -796,7 +795,7 @@ impl PerformanceMonitor {
             }
             Err(err) => {
                 // Log optimization error
-                eprintln!("Optimization failed: {}", err);
+                eprintln!("Optimization failed: {err}");
             }
         }
 
@@ -809,10 +808,10 @@ impl PerformanceMonitor {
         let now = Instant::now();
 
         // Check if it's time for prediction
-        if let Some(last_prediction) = scaler.last_prediction {
-            if now.duration_since(last_prediction) < scaler.prediction_frequency {
-                return;
-            }
+        if let Some(last_prediction) = scaler.last_prediction
+            && now.duration_since(last_prediction) < scaler.prediction_frequency
+        {
+            return;
         }
 
         // Make prediction
@@ -825,7 +824,7 @@ impl PerformanceMonitor {
             }
             Err(err) => {
                 // Log prediction error
-                eprintln!("Prediction failed: {}", err);
+                eprintln!("Prediction failed: {err}");
             }
         }
 
@@ -911,6 +910,12 @@ impl PerformanceMonitor {
 }
 
 // Implementation for PerformanceHistory
+impl Default for PerformanceHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceHistory {
     /// Create a new performance history.
     pub fn new() -> Self {
@@ -976,13 +981,15 @@ impl PerformanceHistory {
 
     /// Get recent task results within a time window.
     pub fn get_recent_results(&self, window: Duration) -> Vec<TaskResult> {
-        let now = Instant::now();
+        let now = chrono::Utc::now();
+        let window_duration =
+            chrono::Duration::from_std(window).unwrap_or_else(|_| chrono::Duration::seconds(60));
+
         self.task_results
             .iter()
             .filter(|result| {
-                // Convert chrono::DateTime to Instant (simplified)
-                let result_time = Instant::now(); // Placeholder
-                now.duration_since(result_time) <= window
+                let elapsed = now - result.completed_at;
+                elapsed <= window_duration
             })
             .cloned()
             .collect()
@@ -991,7 +998,7 @@ impl PerformanceHistory {
     /// Calculate performance trends over a window.
     pub fn calculate_trends(&self, window: Duration) -> PerformanceTrends {
         let recent_results = self.get_recent_results(window);
-        
+
         if recent_results.is_empty() {
             return PerformanceTrends::default();
         }
@@ -1005,17 +1012,15 @@ impl PerformanceHistory {
             .iter()
             .map(|r| if r.success { 1.0 } else { 0.0 })
             .collect();
-        let quality_scores: Vec<f64> = recent_results
-            .iter()
-            .map(|r| r.quality_score)
-            .collect();
+        let quality_scores: Vec<f64> = recent_results.iter().map(|r| r.quality_score).collect();
 
         PerformanceTrends {
             latency_trend: calculate_trend(&latencies),
             success_rate_trend: calculate_trend(&success_rates),
             quality_trend: calculate_trend(&quality_scores),
             throughput_trend: recent_results.len() as f64 / window.as_secs_f64(),
-            cost_trend: recent_results.iter().map(|r| r.cost).sum::<f64>() / recent_results.len() as f64,
+            cost_trend: recent_results.iter().map(|r| r.cost).sum::<f64>()
+                / recent_results.len() as f64,
         }
     }
 }
@@ -1224,7 +1229,10 @@ impl Default for PredictiveScaler {
 
 impl OptimizationEngine {
     /// Optimize resource allocation based on performance history.
-    pub fn optimize(&mut self, _history: &PerformanceHistory) -> Result<OptimizationResult, String> {
+    pub fn optimize(
+        &mut self,
+        _history: &PerformanceHistory,
+    ) -> Result<OptimizationResult, String> {
         // Simplified optimization logic
         let result = OptimizationResult {
             timestamp: Instant::now(),
@@ -1257,7 +1265,10 @@ impl OptimizationEngine {
 
 impl PredictiveScaler {
     /// Predict future scaling needs.
-    pub fn predict(&mut self, _history: &PerformanceHistory) -> Result<ScalingRecommendation, String> {
+    pub fn predict(
+        &mut self,
+        _history: &PerformanceHistory,
+    ) -> Result<ScalingRecommendation, String> {
         // Simplified prediction logic
         let recommendation = ScalingRecommendation {
             timestamp: Instant::now(),

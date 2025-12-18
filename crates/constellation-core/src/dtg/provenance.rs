@@ -3,13 +3,13 @@
 //! Provides cryptographic signing and verification of DTG execution chains
 //! for auditability, integrity, and non-repudiation.
 
+use crate::mcp::crypto::{CryptoError, McpCrypto};
 use crate::models::dtg::{
     CryptographicSignature, DataTransformationGraph, DtgProvenance, TransformationRecord,
 };
-use crate::mcp::crypto::{CryptoError, McpCrypto};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -158,19 +158,16 @@ impl ProvenanceManager {
         let provenance = self
             .provenance_records
             .get(&dtg_id)
-            .ok_or_else(|| ProvenanceError::ProvenanceNotFound(dtg_id))?;
+            .ok_or(ProvenanceError::ProvenanceNotFound(dtg_id))?;
 
         // Serialize the provenance for signing
         let provenance_json = serde_json::to_vec(provenance)
             .map_err(|e| ProvenanceError::SerializationError(e.to_string()))?;
 
         // Create signature using MCP crypto
-        let mcp_signature = self.crypto.create_signature(
-            signer_key_id,
-            signer,
-            algorithm,
-            &provenance_json,
-        )?;
+        let mcp_signature =
+            self.crypto
+                .create_signature(signer_key_id, signer, algorithm, &provenance_json)?;
 
         // Convert to DTG cryptographic signature
         let signature = CryptographicSignature {
@@ -209,18 +206,15 @@ impl ProvenanceManager {
         let provenance = self
             .provenance_records
             .get(&dtg_id)
-            .ok_or_else(|| ProvenanceError::ProvenanceNotFound(dtg_id))?;
+            .ok_or(ProvenanceError::ProvenanceNotFound(dtg_id))?;
 
         let mut results = Vec::new();
 
         for signature in &provenance.signatures {
             // Get the public key ID
-            let public_key_id = signature
-                .public_key
-                .as_ref()
-                .ok_or_else(|| {
-                    ProvenanceError::VerificationError("No public key provided".to_string())
-                })?;
+            let public_key_id = signature.public_key.as_ref().ok_or_else(|| {
+                ProvenanceError::VerificationError("No public key provided".to_string())
+            })?;
 
             // Serialize provenance for verification
             let provenance_json = serde_json::to_vec(provenance)
@@ -232,11 +226,9 @@ impl ProvenanceManager {
                 .map_err(|e| ProvenanceError::VerificationError(e.to_string()))?;
 
             // Verify signature
-            let is_valid = self.crypto.verify(
-                public_key_id,
-                &provenance_json,
-                &signature_bytes,
-            )?;
+            let is_valid = self
+                .crypto
+                .verify(public_key_id, &provenance_json, &signature_bytes)?;
 
             results.push(SignatureVerificationResult {
                 signer: signature.signer.clone(),
@@ -265,7 +257,7 @@ impl ProvenanceManager {
         let hash = hasher.finalize();
 
         // Convert to hex string
-        Ok(format!("{:x}", hash))
+        Ok(format!("{hash:x}"))
     }
 
     /// Verify provenance integrity using cryptographic hashes.
@@ -276,7 +268,7 @@ impl ProvenanceManager {
         let provenance = self
             .provenance_records
             .get(&dtg_id)
-            .ok_or_else(|| ProvenanceError::ProvenanceNotFound(dtg_id))?;
+            .ok_or(ProvenanceError::ProvenanceNotFound(dtg_id))?;
 
         // Compute current hash
         let current_hash = self.hash_provenance(provenance)?;
@@ -288,7 +280,7 @@ impl ProvenanceManager {
         for (i, transformation) in provenance.transformation_chain.iter().enumerate() {
             if transformation.transformation_hash.is_empty() {
                 chain_integrity = false;
-                chain_errors.push(format!("Transformation {} has no hash", i));
+                chain_errors.push(format!("Transformation {i} has no hash"));
             }
         }
 
@@ -347,10 +339,7 @@ impl ProvenanceManager {
         entry.operation_hash = hash;
 
         // Store in audit log
-        self.audit_logs
-            .entry(dtg_id)
-            .or_insert_with(Vec::new)
-            .push(entry);
+        self.audit_logs.entry(dtg_id).or_default().push(entry);
 
         Ok(())
     }
@@ -360,7 +349,7 @@ impl ProvenanceManager {
         self.audit_logs
             .get(&dtg_id)
             .map(|logs| logs.as_slice())
-            .ok_or_else(|| ProvenanceError::ProvenanceNotFound(dtg_id))
+            .ok_or(ProvenanceError::ProvenanceNotFound(dtg_id))
     }
 
     /// Verify audit trail integrity.
@@ -371,7 +360,7 @@ impl ProvenanceManager {
         let logs = self
             .audit_logs
             .get(&dtg_id)
-            .ok_or_else(|| ProvenanceError::ProvenanceNotFound(dtg_id))?;
+            .ok_or(ProvenanceError::ProvenanceNotFound(dtg_id))?;
 
         let mut integrity = true;
         let mut errors = Vec::new();
@@ -384,8 +373,7 @@ impl ProvenanceManager {
             if current.previous_hash != Some(previous.operation_hash.clone()) {
                 integrity = false;
                 errors.push(format!(
-                    "Audit chain broken at entry {}: previous hash mismatch",
-                    i
+                    "Audit chain broken at entry {i}: previous hash mismatch"
                 ));
             }
 
@@ -400,7 +388,7 @@ impl ProvenanceManager {
 
             if computed_hash != current.operation_hash {
                 integrity = false;
-                errors.push(format!("Entry {} hash mismatch", i));
+                errors.push(format!("Entry {i} hash mismatch"));
             }
         }
 
@@ -521,7 +509,7 @@ impl Default for ProvenanceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::dtg::{DtgDataRef, DtgNode, DtgNodeStatus, DtgMetrics};
+    use crate::models::dtg::{DtgDataRef, DtgMetrics, DtgNode, DtgNodeStatus};
     use serde_json::json;
 
     #[test]
@@ -545,13 +533,7 @@ mod tests {
         };
 
         // Create provenance
-        let provenance = manager.create_provenance(
-            &dtg,
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-        )?;
+        let provenance = manager.create_provenance(&dtg, vec![], vec![], vec![], vec![])?;
 
         assert_eq!(provenance.dtg_id, dtg.id);
         assert!(provenance.signatures.is_empty());

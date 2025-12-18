@@ -3,22 +3,16 @@
 //! This example shows how to configure LLM strategists with SLM executors
 //! for optimal performance and resource utilization.
 
-use constellation_core::hybrid::{
-    LlmStrategistCoordinator, Task, TaskResult,
-};
 use constellation_core::hybrid::coordinator::ExecutorStatus;
+use constellation_core::hybrid::{LlmStrategistCoordinator, Task, TaskResult};
 use constellation_core::models::hybrid_agent::{
-    AllocationStrategy, CommunicationPattern, CoordinationStrategyType, DecisionMakingApproach,
-    ExecutorDomain, ExecutorModelSize, FallbackAction, FallbackStrategy, FallbackTrigger,
-    FeedbackMechanism, ModelProvider, ScalingStrategy, StrategistCapability,
-};
-use constellation_core::{
-    CoordinationStrategy, ExecutorConfig, HybridAgentConfig, HybridResourceAllocation,
-    PerformanceTargets, StrategistConfig,
+    AllocationStrategy, CommunicationPattern, CoordinationStrategy, CoordinationStrategyType,
+    DecisionMakingApproach, ExecutorConfig, ExecutorDomain, ExecutorModelSize, FallbackAction,
+    FallbackStrategy, FallbackTrigger, FeedbackMechanism, HybridAgentConfig, ModelProvider,
+    PerformanceTargets, ResourceAllocation, ScalingStrategy, StrategistCapability,
+    StrategistConfig,
 };
 use serde_json::json;
-use std::thread;
-use std::time::Duration;
 
 fn main() {
     println!("=== Hybrid Agent Architecture Example ===\n");
@@ -83,7 +77,7 @@ fn main() {
     agent.coordination = coordination;
 
     // Configure resource allocation
-    let mut allocation = HybridResourceAllocation::default();
+    let mut allocation = ResourceAllocation::default();
     allocation.strategy = AllocationStrategy::Predictive;
     allocation.scaling_strategy = ScalingStrategy::Horizontal;
     agent.resource_allocation = allocation;
@@ -134,7 +128,7 @@ fn main() {
     );
     println!("Capabilities:");
     for capability in &agent.strategist.capabilities {
-        println!("  - {:?}", capability);
+        println!("  - {capability:?}");
     }
 
     println!("\n=== Executor Configurations ===");
@@ -235,14 +229,14 @@ fn main() {
     // Calculate metrics
     println!("\n=== Calculated Metrics ===");
     let total_cost = agent.estimated_cost_per_1k_tasks();
-    println!("Estimated cost per 1K tasks: ${:.2}", total_cost);
+    println!("Estimated cost per 1K tasks: ${total_cost:.2}");
 
     let resources = agent.total_resource_requirements();
     println!("Total resource requirements:");
     println!("  CPU Cores: {}", resources.cpu_cores);
     println!("  Memory: {} MB", resources.memory_mb);
     if let Some(gpu_memory) = resources.gpu_memory_mb {
-        println!("  GPU Memory: {} MB", gpu_memory);
+        println!("  GPU Memory: {gpu_memory} MB");
     }
     println!("  Disk: {} MB", resources.disk_mb);
     println!("  Network: {} Mbps", resources.network_mbps);
@@ -253,10 +247,7 @@ fn main() {
         .iter()
         .map(|executor| executor.performance.throughput_tps)
         .sum();
-    println!(
-        "Total executor throughput: {:.1} tasks/sec",
-        total_throughput
-    );
+    println!("Total executor throughput: {total_throughput:.1} tasks/sec");
 
     // Serialize to JSON
     let json = serde_json::to_string_pretty(&agent).unwrap();
@@ -270,7 +261,7 @@ fn main() {
 
 fn demonstrate_coordinator(config: HybridAgentConfig) {
     println!("\n--- Initializing Coordinator ---");
-    
+
     // Create coordinator
     let coordinator = LlmStrategistCoordinator::new(config.clone())
         .with_fallback_strategies(config.fallback_strategies.clone());
@@ -281,7 +272,7 @@ fn demonstrate_coordinator(config: HybridAgentConfig) {
         let status = ExecutorStatus::new(executor.id.clone())
             .with_load(0.3)
             .with_performance(
-                executor.performance.availability as f64,
+                executor.performance.availability,
                 0.85,
                 executor.performance.avg_latency_ms as f64,
             )
@@ -297,41 +288,55 @@ fn demonstrate_coordinator(config: HybridAgentConfig) {
     // Submit tasks
     println!("\nSubmitting tasks...");
     let tasks = vec![
-        Task::new("code_generation".to_string(), json!({"language": "rust", "description": "Create a sorting function"}))
-            .with_priority(75)
-            .with_quality_requirement(0.9)
-            .with_budget_allocation(2.0),
-        Task::new("test_generation".to_string(), json!({"function": "sort", "language": "rust"}))
-            .with_priority(50)
-            .with_quality_requirement(0.8)
-            .with_budget_allocation(1.5),
-        Task::new("research".to_string(), json!({"topic": "sorting algorithms", "depth": "intermediate"}))
-            .with_priority(25)
-            .with_quality_requirement(0.7)
-            .with_budget_allocation(1.0),
-        Task::new("code_review".to_string(), json!({"code": "fn sort() {}", "language": "rust"}))
-            .with_priority(100)
-            .with_quality_requirement(0.95)
-            .with_budget_allocation(3.0),
+        Task::new(
+            "code_generation".to_string(),
+            json!({"language": "rust", "description": "Create a sorting function"}),
+        )
+        .with_priority(75)
+        .with_quality_requirement(0.9)
+        .with_budget_allocation(2.0),
+        Task::new(
+            "test_generation".to_string(),
+            json!({"function": "sort", "language": "rust"}),
+        )
+        .with_priority(50)
+        .with_quality_requirement(0.8)
+        .with_budget_allocation(1.5),
+        Task::new(
+            "research".to_string(),
+            json!({"topic": "sorting algorithms", "depth": "intermediate"}),
+        )
+        .with_priority(25)
+        .with_quality_requirement(0.7)
+        .with_budget_allocation(1.0),
+        Task::new(
+            "code_review".to_string(),
+            json!({"code": "fn sort() {}", "language": "rust"}),
+        )
+        .with_priority(100)
+        .with_quality_requirement(0.95)
+        .with_budget_allocation(3.0),
     ];
 
     for task in &tasks {
         let task_id = coordinator
             .submit_task(task.clone())
             .expect("Failed to submit task");
-        println!("  - Task {} submitted (type: {}, priority: {})", 
-            task_id, task.task_type, task.priority);
+        println!(
+            "  - Task {} submitted (type: {}, priority: {})",
+            task_id, task.task_type, task.priority
+        );
     }
 
     // Assign tasks
     println!("\nAssigning tasks...");
-    let assignments = coordinator
-        .assign_tasks()
-        .expect("Failed to assign tasks");
+    let assignments = coordinator.assign_tasks().expect("Failed to assign tasks");
 
     for assignment in &assignments {
-        println!("  - Task {} assigned to executor {}", 
-            assignment.task_id, assignment.executor_id);
+        println!(
+            "  - Task {} assigned to executor {}",
+            assignment.task_id, assignment.executor_id
+        );
     }
 
     // Simulate task completion
@@ -368,8 +373,14 @@ fn demonstrate_coordinator(config: HybridAgentConfig) {
     println!("  - Avg Latency: {:.2} ms", metrics.avg_latency_ms);
     println!("  - Success Rate: {:.2}%", metrics.success_rate * 100.0);
     println!("  - Avg Quality: {:.2}%", metrics.avg_quality_score * 100.0);
-    println!("  - Resource Utilization: {:.2}%", metrics.resource_utilization * 100.0);
-    println!("  - Cost Efficiency: {:.2}%", metrics.cost_efficiency * 100.0);
+    println!(
+        "  - Resource Utilization: {:.2}%",
+        metrics.resource_utilization * 100.0
+    );
+    println!(
+        "  - Cost Efficiency: {:.2}%",
+        metrics.cost_efficiency * 100.0
+    );
     println!("  - Availability: {:.2}%", metrics.availability * 100.0);
 
     // Get queue stats
@@ -379,7 +390,10 @@ fn demonstrate_coordinator(config: HybridAgentConfig) {
     println!("  - Active Tasks: {}", queue_stats.active_tasks);
     println!("  - Completed Tasks: {}", queue_stats.completed_tasks);
     println!("  - Total Processed: {}", queue_stats.total_tasks_processed);
-    println!("  - Total Budget Spent: ${:.2}", queue_stats.total_budget_spent);
+    println!(
+        "  - Total Budget Spent: ${:.2}",
+        queue_stats.total_budget_spent
+    );
 
     // Get executor stats
     println!("\nExecutor Statistics:");
@@ -402,7 +416,7 @@ fn demonstrate_coordinator(config: HybridAgentConfig) {
     } else {
         println!("  - Fallback actions needed:");
         for action in fallback_actions {
-            println!("    - {:?}", action);
+            println!("    - {action:?}");
         }
     }
 

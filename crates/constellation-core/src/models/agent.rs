@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 /// A2A Protocol Binding types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ProtocolBinding {
     /// JSON-RPC protocol binding

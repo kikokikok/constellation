@@ -12,9 +12,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
 
-use crate::hybrid::performance_monitor::{Alert, AlertLevel, AlertType, PerformanceMetric, PerformanceMonitor};
+use crate::hybrid::performance_monitor::{
+    Alert, AlertLevel, AlertType, PerformanceMetric, PerformanceMonitor,
+};
 use crate::models::hybrid_agent::{FallbackAction, FallbackStrategy, FallbackTrigger};
 
 /// Circuit breaker state.
@@ -94,12 +95,12 @@ impl CircuitBreaker {
             }
             CircuitBreakerState::Open => {
                 // Check if reset timeout has passed
-                if let Some(last_failure) = self.last_failure_time {
-                    if last_failure.elapsed() >= self.config.reset_timeout {
-                        self.state = CircuitBreakerState::HalfOpen;
-                        self.success_count = 0;
-                        self.failure_count = 0;
-                    }
+                if let Some(last_failure) = self.last_failure_time
+                    && last_failure.elapsed() >= self.config.reset_timeout
+                {
+                    self.state = CircuitBreakerState::HalfOpen;
+                    self.success_count = 0;
+                    self.failure_count = 0;
                 }
             }
         }
@@ -177,16 +178,17 @@ impl RetryMechanism {
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
         let base_delay = self.config.initial_delay.as_millis() as f64;
         let delay_ms = base_delay * self.config.backoff_factor.powi(attempt as i32 - 1);
-        
-        let mut delay = Duration::from_millis(delay_ms.min(self.config.max_delay.as_millis() as f64) as u64);
-        
+
+        let mut delay =
+            Duration::from_millis(delay_ms.min(self.config.max_delay.as_millis() as f64) as u64);
+
         if self.config.jitter {
             use rand::Rng;
-            let mut rng = rand::thread_rng();
-            let jitter = rng.gen_range(0.8..1.2);
+            let mut rng = rand::rng();
+            let jitter = rng.random_range(0.8..1.2);
             delay = Duration::from_millis((delay.as_millis() as f64 * jitter) as u64);
         }
-        
+
         delay
     }
 }
@@ -209,30 +211,45 @@ pub struct GracefulDegradation {
     pub actions: HashMap<DegradationLevel, Vec<FallbackAction>>,
 }
 
+impl Default for GracefulDegradation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GracefulDegradation {
     pub fn new() -> Self {
         let mut actions = HashMap::new();
-        
+
         actions.insert(DegradationLevel::FullService, vec![]);
-        actions.insert(DegradationLevel::ReducedQuality, vec![
-            FallbackAction::ReduceQuality,
-            FallbackAction::SwitchExecutor,
-        ]);
-        actions.insert(DegradationLevel::EssentialOnly, vec![
-            FallbackAction::ReduceQuality,
-            FallbackAction::SwitchExecutor,
-            FallbackAction::ScaleResources,
-        ]);
-        actions.insert(DegradationLevel::ReadOnly, vec![
-            FallbackAction::AbortTask,
-            FallbackAction::NotifyHuman,
-        ]);
-        actions.insert(DegradationLevel::EmergencyMode, vec![
-            FallbackAction::AbortTask,
-            FallbackAction::NotifyHuman,
-            FallbackAction::UseAlternativeStrategy,
-        ]);
-        
+        actions.insert(
+            DegradationLevel::ReducedQuality,
+            vec![
+                FallbackAction::ReduceQuality,
+                FallbackAction::SwitchExecutor,
+            ],
+        );
+        actions.insert(
+            DegradationLevel::EssentialOnly,
+            vec![
+                FallbackAction::ReduceQuality,
+                FallbackAction::SwitchExecutor,
+                FallbackAction::ScaleResources,
+            ],
+        );
+        actions.insert(
+            DegradationLevel::ReadOnly,
+            vec![FallbackAction::AbortTask, FallbackAction::NotifyHuman],
+        );
+        actions.insert(
+            DegradationLevel::EmergencyMode,
+            vec![
+                FallbackAction::AbortTask,
+                FallbackAction::NotifyHuman,
+                FallbackAction::UseAlternativeStrategy,
+            ],
+        );
+
         Self {
             current_level: DegradationLevel::FullService,
             triggers: vec![
@@ -244,7 +261,7 @@ impl GracefulDegradation {
             actions,
         }
     }
-    
+
     pub fn escalate(&mut self) -> Vec<FallbackAction> {
         match self.current_level {
             DegradationLevel::FullService => {
@@ -263,10 +280,13 @@ impl GracefulDegradation {
                 // Already at highest level
             }
         }
-        
-        self.actions.get(&self.current_level).cloned().unwrap_or_default()
+
+        self.actions
+            .get(&self.current_level)
+            .cloned()
+            .unwrap_or_default()
     }
-    
+
     pub fn deescalate(&mut self) -> Vec<FallbackAction> {
         match self.current_level {
             DegradationLevel::EmergencyMode => {
@@ -285,8 +305,11 @@ impl GracefulDegradation {
                 // Already at lowest level
             }
         }
-        
-        self.actions.get(&self.current_level).cloned().unwrap_or_default()
+
+        self.actions
+            .get(&self.current_level)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
@@ -324,11 +347,11 @@ impl Bulkhead {
             config: BulkheadConfig::default(),
         }
     }
-    
+
     pub fn can_execute(&self) -> bool {
         self.concurrent_calls < self.config.max_concurrent_calls
     }
-    
+
     pub fn acquire(&mut self) -> bool {
         if self.can_execute() {
             self.concurrent_calls += 1;
@@ -337,7 +360,7 @@ impl Bulkhead {
             false
         }
     }
-    
+
     pub fn release(&mut self) {
         if self.concurrent_calls > 0 {
             self.concurrent_calls -= 1;
@@ -367,17 +390,20 @@ impl FallbackManager {
             strategies: Vec::new(),
         }
     }
-    
-    pub fn with_performance_monitor(mut self, performance_monitor: Arc<PerformanceMonitor>) -> Self {
+
+    pub fn with_performance_monitor(
+        mut self,
+        performance_monitor: Arc<PerformanceMonitor>,
+    ) -> Self {
         self.performance_monitor = Some(performance_monitor);
         self
     }
-    
+
     pub fn with_strategies(mut self, strategies: Vec<FallbackStrategy>) -> Self {
         self.strategies = strategies;
         self
     }
-    
+
     pub async fn add_circuit_breaker(&self, id: String, config: Option<CircuitBreakerConfig>) {
         let mut circuit_breakers = self.circuit_breakers.write().await;
         let circuit_breaker = match config {
@@ -386,7 +412,7 @@ impl FallbackManager {
         };
         circuit_breakers.insert(id, circuit_breaker);
     }
-    
+
     pub async fn add_bulkhead(&self, id: String, config: Option<BulkheadConfig>) {
         let mut bulkheads = self.bulkheads.write().await;
         let mut bulkhead = Bulkhead::new(id.clone());
@@ -395,28 +421,29 @@ impl FallbackManager {
         }
         bulkheads.insert(id, bulkhead);
     }
-    
+
     pub async fn record_success(&self, circuit_breaker_id: &str) {
         let mut circuit_breakers = self.circuit_breakers.write().await;
         if let Some(circuit_breaker) = circuit_breakers.get_mut(circuit_breaker_id) {
             circuit_breaker.record_success();
         }
     }
-    
+
     pub async fn record_failure(&self, circuit_breaker_id: &str) {
         let mut circuit_breakers = self.circuit_breakers.write().await;
         if let Some(circuit_breaker) = circuit_breakers.get_mut(circuit_breaker_id) {
             circuit_breaker.record_failure();
         }
     }
-    
+
     pub async fn is_circuit_breaker_available(&self, circuit_breaker_id: &str) -> bool {
         let circuit_breakers = self.circuit_breakers.read().await;
-        circuit_breakers.get(circuit_breaker_id)
+        circuit_breakers
+            .get(circuit_breaker_id)
             .map(|cb| cb.is_available())
             .unwrap_or(true)
     }
-    
+
     pub async fn acquire_bulkhead(&self, bulkhead_id: &str) -> bool {
         let mut bulkheads = self.bulkheads.write().await;
         if let Some(bulkhead) = bulkheads.get_mut(bulkhead_id) {
@@ -429,17 +456,17 @@ impl FallbackManager {
             result
         }
     }
-    
+
     pub async fn release_bulkhead(&self, bulkhead_id: &str) {
         let mut bulkheads = self.bulkheads.write().await;
         if let Some(bulkhead) = bulkheads.get_mut(bulkhead_id) {
             bulkhead.release();
         }
     }
-    
+
     pub async fn handle_alert(&self, alert: &Alert) -> Vec<FallbackAction> {
         let mut actions = Vec::new();
-        
+
         // Map alert type to fallback trigger based on alert metadata
         let trigger = match alert.alert_type {
             AlertType::Performance => {
@@ -456,7 +483,7 @@ impl FallbackManager {
             AlertType::Availability => Some(FallbackTrigger::AvailabilityBelowThreshold),
             _ => None,
         };
-        
+
         if let Some(trigger) = trigger {
             // Find matching strategies
             for strategy in &self.strategies {
@@ -464,30 +491,30 @@ impl FallbackManager {
                     actions.push(strategy.action.clone());
                 }
             }
-            
+
             // If no specific strategy, use graceful degradation
             if actions.is_empty() && alert.level == AlertLevel::Critical {
                 let mut degradation = self.graceful_degradation.lock().await;
                 actions = degradation.escalate();
             }
         }
-        
+
         actions
     }
-    
+
     pub async fn execute_with_retry<F, T, E>(&self, operation: F) -> Result<T, E>
     where
         F: Fn() -> Result<T, E> + Clone,
         E: std::fmt::Debug,
     {
         let mut last_error = None;
-        
+
         for attempt in 1..=self.retry_mechanism.config.max_attempts {
             match operation() {
                 Ok(result) => return Ok(result),
                 Err(err) => {
                     last_error = Some(err);
-                    
+
                     if attempt < self.retry_mechanism.config.max_attempts {
                         let delay = self.retry_mechanism.calculate_delay(attempt);
                         tokio::time::sleep(delay).await;
@@ -495,35 +522,39 @@ impl FallbackManager {
                 }
             }
         }
-        
+
         Err(last_error.unwrap())
     }
-    
-    pub async fn execute_with_timeout<F, T>(&self, operation: F, timeout: Duration) -> Result<T, String>
+
+    pub async fn execute_with_timeout<F, T>(
+        &self,
+        operation: F,
+        timeout: Duration,
+    ) -> Result<T, String>
     where
         F: std::future::Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
         tokio::time::timeout(timeout, operation)
             .await
-            .map_err(|_| format!("Operation timed out after {:?}", timeout))
+            .map_err(|_| format!("Operation timed out after {timeout:?}"))
     }
-    
+
     pub async fn get_current_degradation_level(&self) -> DegradationLevel {
         let degradation = self.graceful_degradation.lock().await;
         degradation.current_level.clone()
     }
-    
+
     pub async fn get_recommended_actions(&self, trigger: FallbackTrigger) -> Vec<FallbackAction> {
         let mut actions = Vec::new();
-        
+
         // Check configured strategies
         for strategy in &self.strategies {
             if strategy.trigger == trigger {
                 actions.push(strategy.action.clone());
             }
         }
-        
+
         // If no specific strategy, provide default recommendations
         if actions.is_empty() {
             actions = match trigger {
@@ -564,7 +595,7 @@ impl FallbackManager {
                 ],
             };
         }
-        
+
         actions
     }
 }

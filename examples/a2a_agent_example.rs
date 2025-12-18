@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Serialize to JSON (A2A AgentCard format)
     let json = serde_json::to_string_pretty(&ceo_agent)?;
-    println!("\nA2A AgentCard JSON:\n{}", json);
+    println!("\nA2A AgentCard JSON:\n{json}");
 
     Ok(())
 }

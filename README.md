@@ -28,7 +28,10 @@ A Rust-based, multi-agent collaborative platform simulating a company with hiera
     *   **Vector DB:** Qdrant (for agent conversation embeddings and semantic search)
     *   **SQL DB:** PostgreSQL (for structured agent state, decision logs, and budget ledger)
     *   **Cache/Message Bus:** Redis
-*   **Communication:** Inter-agent messages use the A2A protocol format
+*   **Communication:** 
+    *   **A2A Message Broker:** PostgreSQL-based with priority queuing and delivery guarantees
+    *   **Protocol:** A2A (Agent-to-Agent) protocol format
+    *   **Transport:** HTTP/REST and WebSocket for real-time communication
 *   **Observability:** Structured logs and metrics (using `tracing` and OpenTelemetry)
 
 ## 📁 Project Structure
@@ -53,4 +56,31 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🚀 Getting Started
 
-*(Development setup instructions will be added as the project evolves)*
+### Message Broker Quick Start
+
+1. **Setup Database:**
+```bash
+createdb constellation
+psql constellation < migrations/001_initial_message_broker_schema.sql
+```
+
+2. **Run Examples:**
+```bash
+# Basic message broker example
+cargo run --example message_broker_example
+
+# Full HTTP/WebSocket server
+DATABASE_URL=postgresql://localhost/constellation cargo run --example message_broker_server
+```
+
+3. **Explore Documentation:**
+- [Message Broker Guide](docs/MESSAGE_BROKER_GUIDE.md)
+- [A2A Protocol Spec](openspec/changes/add-a2a-message-broker/specs/agent-a2a-protocol/spec.md)
+- [Database Schema](migrations/001_initial_message_broker_schema.sql)
+
+## 📚 Documentation
+
+- [Message Broker Guide](docs/MESSAGE_BROKER_GUIDE.md) - Complete guide to A2A message broker
+- [API Documentation](docs/API.md) - REST and WebSocket API reference
+- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) - Production deployment instructions
+- [Research Paper](docs/RESEARCH_PAPER.md) - Academic foundations and design principles

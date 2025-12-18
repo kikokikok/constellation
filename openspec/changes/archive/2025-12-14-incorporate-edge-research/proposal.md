@@ -11,12 +11,14 @@ Current Constellation implementation lacks cutting-edge research insights that a
 - **ADD** Open-world research environment for emergent collaboration and discovery
 - **ADD** Self-assessment and self-feedback mechanisms for autonomous error correction
 - **ADD** Cross-data-source verification agents with transparent query provenance
+- **ADD** System integration layer connecting DTG, MCP, hybrid agents, and autonomy measurement
 - **MODIFY** Agent communication to include context validation and tool call provenance
 - **BREAKING** Shift from control-centric to data-centric execution models
 
 ## Impact
-- Affected specs: agent-a2a-protocol, agent-harness, agent-skills, multi-agent-research
-- Affected code: Complete architectural overhaul with DTG, MCP security, hybrid agents
-- Performance: Improved error tracing, security validation, emergent discovery
-- Research capability: State-of-the-art autonomous scientific discovery
-- Business autonomy: Measurable progress toward AGI-scale capabilities
+- Affected specs: agent-a2a-protocol, agent-harness, agent-skills, multi-agent-research, system-integration
+- Affected code: Complete architectural overhaul with DTG, MCP security, hybrid agents, autonomy measurement, and integration layer
+- Performance: Improved error tracing, security validation, emergent discovery, integrated workflows
+- Research capability: State-of-the-art autonomous scientific discovery with integrated components
+- Business autonomy: Measurable progress toward AGI-scale capabilities with comprehensive integration
+- System cohesion: Unified architecture connecting all research innovations into cohesive platform

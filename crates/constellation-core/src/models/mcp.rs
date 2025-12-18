@@ -53,12 +53,26 @@ pub struct McpAlgorithms {
     pub hash: String,
 }
 
+impl Default for McpAlgorithms {
+    fn default() -> Self {
+        Self {
+            signature: "Ed25519".to_string(),
+            encryption: "AES-256-GCM".to_string(),
+            key_exchange: "X25519".to_string(),
+            hash: "SHA-256".to_string(),
+        }
+    }
+}
+
 /// Key management configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyManagement {
     pub rotation_policy: RotationPolicy,
     pub storage: KeyStorage,
     pub backup_policy: BackupPolicy,
+    /// Metadata for key management
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Key rotation policy.
@@ -93,6 +107,9 @@ pub struct AccessControl {
     pub authentication: AuthenticationMethod,
     pub authorization: AuthorizationModel,
     pub roles: Vec<Role>,
+    /// Metadata for storing access rules and other configuration
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Authentication method.
@@ -135,6 +152,9 @@ pub struct AuditLogging {
     pub enabled: bool,
     pub retention_days: u32,
     pub events_to_log: Vec<AuditEvent>,
+    /// Metadata for storing audit logs
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Audit event to log.
@@ -225,6 +245,7 @@ pub struct McpSecureEnvelope {
     pub message_type: String,
     pub payload: McpEncryptedMessage,
     pub signature: McpSignature,
+    pub security_level: SecurityLevel,
     pub sent_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -285,17 +306,6 @@ impl McpSecurityContext {
     }
 }
 
-impl Default for McpAlgorithms {
-    fn default() -> Self {
-        Self {
-            signature: "Ed25519".to_string(),
-            encryption: "AES-256-GCM".to_string(),
-            key_exchange: "X25519".to_string(),
-            hash: "SHA-256".to_string(),
-        }
-    }
-}
-
 impl Default for KeyManagement {
     fn default() -> Self {
         Self {
@@ -310,6 +320,46 @@ impl Default for KeyManagement {
                 frequency_days: 7,
                 encrypted: true,
             },
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl KeyManagement {
+    /// Create a new KeyManagement instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a key with metadata
+    pub fn register_key(&mut self, key_id: &str, metadata: &crate::mcp::crypto::KeyMetadata) {
+        self.metadata.insert(
+            key_id.to_string(),
+            serde_json::json!({
+                "key_id": key_id,
+                "created_at": metadata.created_at.to_rfc3339(),
+                "expires_at": metadata.expires_at.map(|dt| dt.to_rfc3339()),
+                "owner": metadata.owner,
+                "usage": format!("{:?}", metadata.usage),
+                "active": metadata.active,
+            }),
+        );
+    }
+
+    /// Rotate a key (mark old as inactive, new as active)
+    pub fn rotate_key(&mut self, old_key_id: &str, new_key_id: &str) {
+        if let Some(old_metadata) = self.metadata.get_mut(old_key_id)
+            && let Some(obj) = old_metadata.as_object_mut()
+        {
+            obj.insert("active".to_string(), serde_json::Value::Bool(false));
+            obj.insert(
+                "rotated_to".to_string(),
+                serde_json::Value::String(new_key_id.to_string()),
+            );
+            obj.insert(
+                "rotated_at".to_string(),
+                serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+            );
         }
     }
 }
@@ -343,6 +393,7 @@ impl Default for AccessControl {
                     ],
                 },
             ],
+            metadata: std::collections::HashMap::new(),
         }
     }
 }
@@ -372,7 +423,148 @@ impl Default for AuditLogging {
                     log_failure: true,
                 },
             ],
+            metadata: std::collections::HashMap::new(),
         }
+    }
+}
+
+impl AccessControl {
+    /// Create a new AccessControl instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if a subject is authorized to perform an action on a resource
+    pub fn is_authorized(&self, subject_id: &str, resource_id: &str, action: &str) -> bool {
+        // Check metadata for specific rules first
+        let rule_key = format!("rule_{subject_id}_{resource_id}_{action}");
+        if self.metadata.contains_key(&rule_key) {
+            return true;
+        }
+
+        // Check role-based permissions
+        for role in &self.roles {
+            // In a real implementation, we would check if the subject has this role
+            // For now, we'll check if any role has the required permission
+            for permission in &role.permissions {
+                if (permission.resource == "*" || permission.resource == resource_id)
+                    && (permission.action == "*" || permission.action == action)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Add an access rule
+    pub fn add_rule(
+        &mut self,
+        subject_id: &str,
+        resource_id: &str,
+        action: &str,
+        security_level: SecurityLevel,
+    ) {
+        let rule_key = format!("rule_{subject_id}_{resource_id}_{action}");
+        self.metadata.insert(
+            rule_key,
+            serde_json::json!({
+                "subject_id": subject_id,
+                "resource_id": resource_id,
+                "action": action,
+                "security_level": format!("{:?}", security_level),
+                "created_at": chrono::Utc::now().to_rfc3339(),
+            }),
+        );
+    }
+}
+
+impl AuditLogging {
+    /// Create a new AuditLogging instance
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Log an audit event
+    pub fn log_event(
+        &mut self,
+        event_type: &str,
+        message: &str,
+        resource_id: Option<&str>,
+        security_level: SecurityLevel,
+    ) {
+        if !self.enabled {
+            return;
+        }
+
+        let timestamp = chrono::Utc::now();
+        let log_key = format!("audit_{}", timestamp.timestamp());
+
+        self.metadata.insert(
+            log_key,
+            serde_json::json!({
+                "event_type": event_type,
+                "message": message,
+                "resource_id": resource_id,
+                "security_level": format!("{:?}", security_level),
+                "timestamp": timestamp.to_rfc3339(),
+            }),
+        );
+    }
+
+    /// Get audit logs within a time range
+    pub fn get_logs(
+        &self,
+        start_time: Option<chrono::DateTime<chrono::Utc>>,
+        end_time: Option<chrono::DateTime<chrono::Utc>>,
+        security_level: Option<SecurityLevel>,
+    ) -> Vec<String> {
+        let mut logs = Vec::new();
+
+        for (key, value) in &self.metadata {
+            if !key.starts_with("audit_") {
+                continue;
+            }
+
+            if let Some(log_data) = value.as_object()
+                && let Some(timestamp_str) = log_data.get("timestamp").and_then(|v| v.as_str())
+                && let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(timestamp_str)
+            {
+                let timestamp_utc = timestamp.with_timezone(&chrono::Utc);
+
+                // Filter by time range
+                if let Some(start) = start_time
+                    && timestamp_utc < start
+                {
+                    continue;
+                }
+
+                if let Some(end) = end_time
+                    && timestamp_utc > end
+                {
+                    continue;
+                }
+
+                // Filter by security level
+                if let Some(level) = &security_level
+                    && let Some(log_level_str) =
+                        log_data.get("security_level").and_then(|v| v.as_str())
+                {
+                    let log_level = format!("{level:?}");
+                    if log_level_str != log_level {
+                        continue;
+                    }
+                }
+
+                if let Some(message) = log_data.get("message").and_then(|v| v.as_str()) {
+                    logs.push(message.to_string());
+                }
+            }
+        }
+
+        logs.sort();
+        logs
     }
 }
 
@@ -384,6 +576,7 @@ impl McpSecureEnvelope {
         message_type: String,
         payload: McpEncryptedMessage,
         signature: McpSignature,
+        security_level: SecurityLevel,
     ) -> Self {
         Self {
             message_id: Uuid::new_v4(),
@@ -392,6 +585,7 @@ impl McpSecureEnvelope {
             message_type,
             payload,
             signature,
+            security_level,
             sent_at: chrono::Utc::now(),
             expires_at: None,
         }
