@@ -2,10 +2,14 @@
 
 pub mod agent;
 pub mod autonomy;
+pub mod communication;
 pub mod dtg;
 pub mod hybrid_agent;
 pub mod mcp;
 pub mod message_broker;
+
+#[cfg(test)]
+mod communication_tests;
 
 // Re-export the agent types.
 pub use agent::{
@@ -16,6 +20,11 @@ pub use autonomy::{
     AutonomyBenchmark, AutonomyLevel, AutonomyMeasurement, AutonomyProgress, AxisValidation,
     BenchmarkValidationResult, CapabilityAxis, CollaborationPattern, CollaborationPatternType,
     KappaScore, SelfAssessment,
+};
+pub use communication::{
+    CommunicationError, CommunicationPattern, CommunicationResult, DeliveryGuarantee,
+    NotificationMessage, PublishMessage, RequestConfig, RequestMessage, ResponseConfig,
+    ResponseMessage, ResponseStatus, Subscription, TopicPattern,
 };
 pub use dtg::{
     DataTransformationGraph, DtgDataRef, DtgEdge, DtgGraphStatus, DtgMetrics, DtgNode,

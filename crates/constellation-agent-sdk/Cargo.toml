@@ -1,0 +1,31 @@
+[package]
+name = "constellation-agent-sdk"
+version = "0.1.0"
+edition = "2024"
+description = "SDK for Constellation agents with A2A communication patterns"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kikokikok/constellation"
+readme = "README.md"
+keywords = ["multi-agent", "a2a", "message-broker", "communication"]
+categories = ["api-bindings", "asynchronous", "network-programming"]
+
+[dependencies]
+constellation-core = { path = "../constellation-core", version = "0.1.0" }
+tokio = { version = "1.48", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tracing = "0.1"
+async-trait = "0.1"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+axum = { version = "0.7", optional = true }
+serde_json = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.48", features = ["full", "test-util"] }
+tracing-subscriber = "0.3"
+
+[features]
+default = []
+monitoring = ["axum"]
+mock = []  # For testing without real broker

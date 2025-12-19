@@ -1,0 +1,843 @@
+openapi: 3.1.0
+info:
+  title: Constellation A2A Message Broker API
+  version: 1.0.0
+  description: |
+    Complete OpenAPI specification for the Constellation Agent-to-Agent (A2A) Message Broker.
+    
+    This API provides endpoints for agent communication, message management, and system monitoring.
+    
+    ## Authentication
+    - **Bearer Token**: JWT tokens for agent authentication
+    - **API Key**: X-API-Key header for service-to-service communication
+    
+    ## Message Protocol
+    - A2A Protocol v1.0, v1.1, and v2.0 supported
+    - Request/response pattern with correlation IDs
+    - Priority-based message queuing (Critical, High, Normal, Low)
+    - Automatic retry with exponential backoff
+    
+    ## Features
+    - High-performance messaging via Apache Iggy
+    - MCP crypto integration for security
+    - Distributed tracing with OpenTelemetry
+    - Real-time WebSocket connections
+servers:
+  - url: http://localhost:8080/v1
+    description: Local development server
+  - url: https://api.constellation.example.com/v1
+    description: Production API server
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Check if the message broker is healthy and ready to accept requests
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: Get Prometheus metrics for monitoring
+      operationId: getMetrics
+      tags:
+        - System
+      responses:
+        '200':
+          description: Prometheus metrics in text format
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP constellation_messages_total Total number of messages processed
+                  # TYPE constellation_messages_total counter
+                  constellation_messages_total{type="sent"} 1234
+                  constellation_messages_total{type="received"} 5678
+
+  /agents:
+    get:
+      summary: List registered agents
+      description: Get a list of all registered agents with their status
+      operationId: listAgents
+      tags:
+        - Agents
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Filter agents by status
+          schema:
+            type: string
+            enum: [online, offline, error]
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of agents to return
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+      responses:
+        '200':
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Agent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+    post:
+      summary: Register a new agent
+      description: Register a new agent with the message broker
+      operationId: registerAgent
+      tags:
+        - Agents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentRegistration'
+      responses:
+        '201':
+          description: Agent registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Agent already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /agents/{agentId}:
+    get:
+      summary: Get agent details
+      description: Get detailed information about a specific agent
+      operationId: getAgent
+      tags:
+        - Agents
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Agent details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+    delete:
+      summary: Deregister an agent
+      description: Deregister an agent from the message broker
+      operationId: deregisterAgent
+      tags:
+        - Agents
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '204':
+          description: Agent deregistered successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /agents/{agentId}/messages:
+    get:
+      summary: Retrieve messages for an agent
+      description: |
+        Retrieve pending messages for the specified agent.
+        This endpoint supports polling for new messages.
+      operationId: getAgentMessages
+      tags:
+        - Messages
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of messages to return
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+        - name: since
+          in: query
+          required: false
+          description: Only return messages since this timestamp
+          schema:
+            type: string
+            format: date-time
+        - name: priority
+          in: query
+          required: false
+          description: Filter messages by priority
+          schema:
+            type: string
+            enum: [critical, high, normal, low]
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+    post:
+      summary: Send a message to an agent
+      description: |
+        Send a message to the specified agent. The message will be delivered asynchronously.
+        If the agent is offline, the message will be queued for later delivery.
+      operationId: sendMessageToAgent
+      tags:
+        - Messages
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Message'
+            example:
+              id: "123e4567-e89b-12d3-a456-426614174000"
+              sender: "agent-alpha"
+              recipient: "agent-beta"
+              type: "command"
+              payload:
+                action: "calculate"
+                parameters:
+                  x: 42
+                  y: 100
+              timestamp: "2025-01-15T10:30:00Z"
+              priority: 7
+              correlationId: "corr-12345"
+              a2aVersion: "1.1"
+      responses:
+        '202':
+          $ref: '#/components/responses/MessageAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Agent not found
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /agents/{agentId}/messages/{messageId}:
+    get:
+      summary: Get message details
+      description: Get detailed information about a specific message
+      operationId: getMessage
+      tags:
+        - Messages
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - $ref: '#/components/parameters/MessageId'
+      responses:
+        '200':
+          description: Message details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+    delete:
+      summary: Delete a message
+      description: Delete a specific message from an agent's queue
+      operationId: deleteMessage
+      tags:
+        - Messages
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - $ref: '#/components/parameters/MessageId'
+      responses:
+        '204':
+          description: Message deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /agents/{agentId}/status:
+    get:
+      summary: Get agent status
+      description: Get the current status of an agent (online/offline, queue statistics)
+      operationId: getAgentStatus
+      tags:
+        - Agents
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Agent status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /broadcast:
+    post:
+      summary: Broadcast message to all agents
+      description: Send a message to all registered agents
+      operationId: broadcastMessage
+      tags:
+        - Messages
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BroadcastMessage'
+      responses:
+        '202':
+          description: Broadcast message accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BroadcastAck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /auth/token:
+    post:
+      summary: Generate authentication token
+      description: Generate a JWT token for agent authentication
+      operationId: generateToken
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: Authentication token generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - version
+        - uptime
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          description: Overall health status
+        version:
+          type: string
+          description: API version
+        uptime:
+          type: integer
+          description: Server uptime in seconds
+        components:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [healthy, degraded, unhealthy]
+          description: Health status of individual components
+
+    Agent:
+      type: object
+      required:
+        - id
+        - name
+        - status
+        - registeredAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique agent identifier
+        name:
+          type: string
+          description: Human-readable agent name
+        status:
+          type: string
+          enum: [online, offline, error]
+          description: Current agent status
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: List of agent capabilities
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional agent metadata
+        registeredAt:
+          type: string
+          format: date-time
+          description: When the agent was registered
+        lastSeen:
+          type: string
+          format: date-time
+          description: When the agent was last seen online
+
+    AgentRegistration:
+      type: object
+      required:
+        - name
+        - publicKey
+      properties:
+        name:
+          type: string
+          description: Human-readable agent name
+        publicKey:
+          type: string
+          description: Agent's public key for authentication
+        capabilities:
+          type: array
+          items:
+            type: string
+          default: []
+          description: List of agent capabilities
+        metadata:
+          type: object
+          additionalProperties: true
+          default: {}
+          description: Additional agent metadata
+
+    AgentStatus:
+      type: object
+      required:
+        - agentId
+        - status
+        - queueStats
+      properties:
+        agentId:
+          type: string
+          format: uuid
+          description: Agent identifier
+        status:
+          type: string
+          enum: [online, offline, error]
+          description: Current agent status
+        lastActivity:
+          type: string
+          format: date-time
+          description: Last activity timestamp
+        queueStats:
+          $ref: '#/components/schemas/QueueStatistics'
+        sessionId:
+          type: string
+          description: Current session ID if online
+
+    QueueStatistics:
+      type: object
+      required:
+        - total
+        - byPriority
+      properties:
+        total:
+          type: integer
+          description: Total messages in queue
+        byPriority:
+          type: object
+          properties:
+            critical:
+              type: integer
+            high:
+              type: integer
+            normal:
+              type: integer
+            low:
+              type: integer
+        oldestMessage:
+          type: string
+          format: date-time
+          description: Timestamp of oldest message in queue
+
+    Message:
+      type: object
+      required:
+        - id
+        - sender
+        - recipient
+        - type
+        - payload
+        - timestamp
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique message identifier
+        sender:
+          type: string
+          description: Sender agent identifier
+        recipient:
+          type: string
+          description: Recipient agent identifier
+        type:
+          type: string
+          enum: [command, query, event, response, error]
+          description: Message type
+        payload:
+          type: object
+          additionalProperties: true
+          description: Message content
+        timestamp:
+          type: string
+          format: date-time
+          description: Message creation timestamp
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+          description: Message priority (1=lowest, 10=highest)
+        correlationId:
+          type: string
+          description: Correlation ID for request/response patterns
+        a2aVersion:
+          type: string
+          enum: [1.0, 1.1, 2.0]
+          default: "1.0"
+          description: A2A protocol version
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional message headers
+        ttl:
+          type: integer
+          description: Time-to-live in seconds
+        retryCount:
+          type: integer
+          description: Number of delivery attempts
+
+    MessageAck:
+      type: object
+      required:
+        - messageId
+        - status
+        - timestamp
+      properties:
+        messageId:
+          type: string
+          format: uuid
+          description: Message identifier
+        status:
+          type: string
+          enum: [accepted, queued, delivered, failed]
+          description: Message status
+        timestamp:
+          type: string
+          format: date-time
+          description: Acknowledgment timestamp
+        queuePosition:
+          type: integer
+          description: Position in queue (if queued)
+        estimatedDelivery:
+          type: string
+          format: date-time
+          description: Estimated delivery time
+
+    BroadcastMessage:
+      type: object
+      required:
+        - sender
+        - type
+        - payload
+      properties:
+        sender:
+          type: string
+          description: Sender agent identifier
+        type:
+          type: string
+          enum: [announcement, system, emergency]
+          description: Broadcast type
+        payload:
+          type: object
+          additionalProperties: true
+          description: Message content
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+        excludeAgents:
+          type: array
+          items:
+            type: string
+          description: Agents to exclude from broadcast
+
+    BroadcastAck:
+      type: object
+      required:
+        - broadcastId
+        - recipients
+        - timestamp
+      properties:
+        broadcastId:
+          type: string
+          format: uuid
+          description: Broadcast identifier
+        recipients:
+          type: integer
+          description: Number of agents that will receive the broadcast
+        timestamp:
+          type: string
+          format: date-time
+          description: Broadcast timestamp
+
+    TokenRequest:
+      type: object
+      required:
+        - agentId
+        - signature
+      properties:
+        agentId:
+          type: string
+          format: uuid
+          description: Agent identifier
+        signature:
+          type: string
+          description: Signature of timestamp using agent's private key
+        timestamp:
+          type: string
+          format: date-time
+          description: Timestamp used for signature
+
+    TokenResponse:
+      type: object
+      required:
+        - token
+        - expiresAt
+      properties:
+        token:
+          type: string
+          description: JWT authentication token
+        expiresAt:
+          type: string
+          format: date-time
+          description: Token expiration timestamp
+        agentId:
+          type: string
+          format: uuid
+          description: Agent identifier
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error details
+        requestId:
+          type: string
+          description: Request identifier for debugging
+
+  parameters:
+    AgentId:
+      name: agentId
+      in: path
+      required: true
+      description: Agent identifier
+      schema:
+        type: string
+        format: uuid
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      description: Message identifier
+      schema:
+        type: string
+        format: uuid
+    CorrelationId:
+      name: correlationId
+      in: query
+      required: false
+      description: Correlation ID for request tracing
+      schema:
+        type: string
+
+  responses:
+    MessageAccepted:
+      description: Message was accepted for delivery
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MessageAck'
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for agent authentication
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for service-to-service communication
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []
+
+tags:
+  - name: System
+    description: System health and monitoring endpoints
+  - name: Agents
+    description: Agent management operations
+  - name: Messages
+    description: Message exchange operations
+  - name: Authentication
+    description: Authentication and token management

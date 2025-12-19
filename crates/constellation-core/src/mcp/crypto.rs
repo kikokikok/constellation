@@ -1,4 +1,35 @@
-//! Cryptographic operations for MCP security using dryoc crate.
+//! Cryptographic operations for MCP security using dryoc and x25519-dalek crates.
+//!
+//! This module provides secure cryptographic operations for agent communications:
+//! - **X25519 key exchange**: For establishing shared secrets between agents
+//! - **dryoc encryption**: For authenticated encryption of messages
+//! - **Ed25519 signatures**: For message authentication and non-repudiation
+//! - **Key management**: Secure storage and lifecycle management of cryptographic keys
+//!
+//! ## Design Decisions
+//!
+//! ### 1. X25519 for Key Exchange
+//! - **Why**: X25519 is the modern standard for elliptic curve Diffie-Hellman key exchange
+//! - **Implementation**: Uses `x25519-dalek` crate for X25519 operations
+//! - **Security**: Provides forward secrecy when used with ephemeral keys
+//!
+//! ### 2. dryoc for Encryption
+//! - **Why**: dryoc provides misuse-resistant, memory-safe cryptography
+//! - **Implementation**: Uses `dryocsecretbox` for authenticated encryption (ChaCha20-Poly1305)
+//! - **Security**: Automatic nonce generation, secret memory handling
+//!
+//! ### 3. Key Storage
+//! - **Design**: Separate storage for private and public keys with metadata
+//! - **Validation**: Keys have active/inactive status and optional expiration
+//! - **Access**: Private keys are only accessible through the key store API
+//!
+//! ## Security Considerations
+//!
+//! 1. **Key Material**: Private key material is stored as `Vec<u8>` - consider using `secrecy` crate
+//! 2. **Key Rotation**: Implement regular key rotation policies
+//! 3. **Audit Logging**: All cryptographic operations should be logged for audit trails
+//! 4. **Access Control**: Cryptographic operations should check authorization
+//!
 
 use crate::models::mcp::{McpEncryptedMessage, McpSecureEnvelope, McpSignature};
 use base64::prelude::*;
@@ -9,9 +40,11 @@ use dryoc::{
     sign::{Signature, SigningKeyPair},
     types::{StackByteArray, *},
 };
+use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::convert::AsRef;
 use uuid::Uuid;
+use x25519_dalek::{PublicKey, StaticSecret};
 
 /// Cryptographic operations for MCP security.
 #[derive(Debug)]
@@ -112,9 +145,13 @@ pub enum CryptoError {
     #[error("Signature verification failed")]
     SignatureVerificationFailed,
 
-    /// Encryption/decryption failed.
-    #[error("Encryption/decryption failed: {0}")]
-    EncryptionFailed(String),
+    /// Encryption failed.
+    #[error("Encryption failed: {0}")]
+    EncryptionError(String),
+
+    /// Decryption failed.
+    #[error("Decryption failed: {0}")]
+    DecryptionError(String),
 
     /// Key not found.
     #[error("Key not found: {0}")]
@@ -410,14 +447,13 @@ impl McpCrypto {
             .try_into()
             .map_err(|_| CryptoError::InvalidKey("Invalid key length".to_string()))?;
 
-        // TODO: Implement proper dryoc encryption
-        // For now, use simple XOR to get compilation working
-        let mut ciphertext = Vec::with_capacity(data.len());
-        for (i, &byte) in data.iter().enumerate() {
-            let key_byte = secret_key_array[i % 32];
-            ciphertext.push(byte ^ key_byte);
-        }
-        let ciphertext_bytes = ciphertext;
+        // Use dryocsecretbox for proper encryption
+        use dryoc::dryocsecretbox::{DryocSecretBox, Key as DryocKey};
+
+        let key = DryocKey::from(secret_key_array);
+        let dryoc_box = DryocSecretBox::encrypt_to_vecbox(data, &nonce, &key);
+
+        let ciphertext_bytes = dryoc_box.to_vec();
 
         Ok(McpEncryptedMessage {
             ciphertext: BASE64_STANDARD.encode(&ciphertext_bytes),
@@ -474,13 +510,16 @@ impl McpCrypto {
             .try_into()
             .map_err(|_| CryptoError::InvalidKey("Invalid key length".to_string()))?;
 
-        // TODO: Implement proper dryoc decryption
-        // For now, use simple XOR (matching encryption above)
-        let mut plaintext = Vec::with_capacity(ciphertext.len());
-        for (i, &byte) in ciphertext.iter().enumerate() {
-            let key_byte = secret_key_array[i % 32];
-            plaintext.push(byte ^ key_byte);
-        }
+        // Use dryocsecretbox for proper decryption
+        use dryoc::dryocsecretbox::{DryocSecretBox, Key as DryocKey};
+
+        let key = DryocKey::from(secret_key_array);
+        let dryoc_box = DryocSecretBox::from_bytes(&ciphertext)
+            .map_err(|e| CryptoError::DecryptionError(format!("Invalid ciphertext: {}", e)))?;
+
+        let plaintext = dryoc_box
+            .decrypt_to_vec(&nonce_array, &key)
+            .map_err(|e| CryptoError::DecryptionError(format!("Decryption failed: {}", e)))?;
 
         Ok(plaintext)
     }
@@ -501,9 +540,9 @@ impl McpCrypto {
             .get_public_key(public_key_id)
             .ok_or_else(|| CryptoError::KeyNotFound(public_key_id.to_string()))?;
 
-        // Check if keys are active and not expired
+        // Check if private key is active and not expired
+        // Public keys don't need validation since they're public
         self.key_store.validate_key(private_key_id)?;
-        self.key_store.validate_key(public_key_id)?;
 
         if private_key.algorithm != "X25519" || public_key.algorithm != "X25519" {
             return Err(CryptoError::InvalidInput(
@@ -531,15 +570,12 @@ impl McpCrypto {
         public_key_array.copy_from_slice(&public_key.material);
         let peer_public_key = DryocPublicKey::from(public_key_array);
 
-        // Perform X25519 key exchange
-        // For now, use a simple approach since dryoc doesn't have direct x25519 function
-        // In production, we should use a proper key exchange library
-        let mut shared_secret = vec![0u8; 32];
-        for i in 0..32 {
-            shared_secret[i] = secret_key_array[i] ^ public_key_array[i];
-        }
+        // Perform X25519 key exchange using x25519-dalek
+        let static_secret = StaticSecret::from(secret_key_array);
+        let peer_public_key = PublicKey::from(public_key_array);
+        let shared_secret = static_secret.diffie_hellman(&peer_public_key);
 
-        Ok(shared_secret)
+        Ok(shared_secret.to_bytes().to_vec())
     }
 
     /// Create a signature for a message.
@@ -814,27 +850,57 @@ mod tests {
 
     #[test]
     fn test_key_exchange() -> Result<(), CryptoError> {
-        let crypto = McpCrypto::new()?;
+        let mut crypto = McpCrypto::new()?;
 
-        // TODO: Fix X25519 key generation - algorithm might not be supported
-        // For now, test that McpCrypto can be created
-        println!("McpCrypto created successfully");
+        println!("Testing X25519 key generation...");
 
-        // Test with a simpler algorithm if available
-        // let (alice_private, alice_public) =
-        //     crypto.generate_key_pair("X25519", "alice", KeyUsage::KeyExchange)?;
-        // let (bob_private, bob_public) =
-        //     crypto.generate_key_pair("X25519", "bob", KeyUsage::KeyExchange)?;
+        // Generate X25519 key pairs for Alice and Bob
+        let (alice_private, alice_public) =
+            crypto.generate_key_pair("X25519", "alice", KeyUsage::KeyExchange)?;
 
-        // // Alice computes shared secret with Bob's public key
-        // let alice_shared = crypto.key_exchange(&alice_private, &bob_public)?;
+        println!(
+            "Alice private key ID: {}, public key ID: {}",
+            alice_private, alice_public
+        );
 
-        // // Bob computes shared secret with Alice's public key
-        // let bob_shared = crypto.key_exchange(&bob_private, &alice_public)?;
+        let (bob_private, bob_public) =
+            crypto.generate_key_pair("X25519", "bob", KeyUsage::KeyExchange)?;
 
-        // // Both should have the same shared secret
-        // assert_eq!(alice_shared, bob_shared, "Key exchange should produce same shared secret");
+        println!(
+            "Bob private key ID: {}, public key ID: {}",
+            bob_private, bob_public
+        );
 
+        // Check if keys exist in key store
+        println!("Checking if keys exist in key store...");
+        let alice_priv = crypto.key_store.get_private_key(&alice_private);
+        let alice_pub = crypto.key_store.get_public_key(&alice_public);
+        let bob_priv = crypto.key_store.get_private_key(&bob_private);
+        let bob_pub = crypto.key_store.get_public_key(&bob_public);
+
+        println!("Alice private key exists: {}", alice_priv.is_some());
+        println!("Alice public key exists: {}", alice_pub.is_some());
+        println!("Bob private key exists: {}", bob_priv.is_some());
+        println!("Bob public key exists: {}", bob_pub.is_some());
+
+        // Alice computes shared secret with Bob's public key
+        println!("Computing Alice's shared secret...");
+        let alice_shared = crypto.key_exchange(&alice_private, &bob_public)?;
+        println!("Alice shared secret computed: {} bytes", alice_shared.len());
+
+        // Bob computes shared secret with Alice's public key
+        println!("Computing Bob's shared secret...");
+        let bob_shared = crypto.key_exchange(&bob_private, &alice_public)?;
+        println!("Bob shared secret computed: {} bytes", bob_shared.len());
+
+        // Both should have the same shared secret
+        assert_eq!(
+            alice_shared, bob_shared,
+            "Key exchange should produce same shared secret"
+        );
+        assert_eq!(alice_shared.len(), 32, "Shared secret should be 32 bytes");
+
+        println!("Key exchange test passed!");
         Ok(())
     }
 

@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "constellation.configMapName" . }}
+  labels:
+    {{- include "constellation.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.constellation.configFiles }}
+  {{ $key }}: |
+    {{- $value | nindent 4 }}
+  {{- end }}
+  {{- if not .Values.constellation.configFiles }}
+  constellation.yaml: |
+    # Constellation Configuration
+    message_broker:
+      type: {{ .Values.constellation.env.MESSAGE_BROKER_TYPE | default "iggy" }}
+      max_queue_size: {{ .Values.constellation.env.MAX_QUEUE_SIZE | default "10000" }}
+      message_ttl_seconds: {{ .Values.constellation.env.MESSAGE_TTL_SECONDS | default "3600" }}
+    
+    authentication:
+      jwt_expiration_hours: {{ .Values.constellation.env.JWT_EXPIRATION_HOURS | default "24" }}
+      api_key_expiration_days: {{ .Values.constellation.env.API_KEY_EXPIRATION_DAYS | default "30" }}
+    
+    monitoring:
+      prometheus_enabled: {{ .Values.constellation.env.PROMETHEUS_ENABLED | default "true" }}
+  {{- end }}

@@ -13,6 +13,8 @@ chrono = { version = "0.4", features = ["serde"] }
 dryoc = "0.7"
 base64 = "0.22"
 sha2 = "0.10"
+curve25519-dalek = "4.1"
+x25519-dalek = { version = "2.0", features = ["static_secrets", "reusable_secrets"] }
 rand = "0.9"
 regex = "1.10"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
@@ -30,6 +32,19 @@ guard = { workspace = true }
 bytes = { workspace = true }
 secrecy = { workspace = true }
 subtle = { workspace = true }
+
+# libp2p for peer-to-peer networking
+libp2p = { version = "0.56.0", features = ["full"] }
+
+# TOON crate for token-efficient serialization (30-60% fewer tokens than JSON)
+toon = "0.1.2"
+
+# MessagePack for compact binary serialization
+rmp-serde = "1.1"
+
+# Protobuf for type-safe binary serialization
+prost = "0.12"
+prost-types = "0.12"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
@@ -76,3 +91,5 @@ path = "../../examples/message_broker_example.rs"
 [[example]]
 name = "message_broker_server"
 path = "../../examples/message_broker_server.rs"
+
+

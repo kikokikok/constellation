@@ -1,0 +1,346 @@
+# Default values for constellation.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Name overrides
+nameOverride: ""
+fullnameOverride: ""
+
+# Global configuration
+global:
+  # Create namespace
+  createNamespace: true
+  environment: production
+  
+  # Image configuration
+  image:
+    repository: constellation/constellation
+    tag: latest
+    pullPolicy: IfNotPresent
+    
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    metricsPort: 9090
+    healthPort: 8081
+    
+  # Ingress configuration
+  ingress:
+    enabled: false
+    className: nginx
+    annotations: {}
+    hosts:
+      - host: api.constellation.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+# Namespace configuration
+namespace:
+  create: true
+  labels: {}
+  annotations: {}
+
+# Replica count
+replicaCount: 3
+
+# Image configuration
+image:
+  repository: constellation/constellation
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Environment variables
+env:
+  RUST_LOG: "info,constellation_core=debug"
+
+# Pod annotations and labels
+podAnnotations: {}
+podLabels: {}
+
+# Image pull secrets
+imagePullSecrets: []
+
+# Constellation application configuration
+constellation:
+  
+  # Resource limits
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  
+  # Autoscaling configuration
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  
+  # Node selector and tolerations
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  # Pod security context
+  podSecurityContext:
+    fsGroup: 1000
+    runAsNonRoot: true
+    
+  # Container security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+  
+  # Environment variables
+  env:
+    # Logging
+    RUST_LOG: "info,constellation_core=debug"
+    
+    # Message broker
+    MESSAGE_BROKER_TYPE: "iggy"
+    MAX_QUEUE_SIZE: "10000"
+    MESSAGE_TTL_SECONDS: "3600"
+    
+    # Authentication
+    JWT_EXPIRATION_HOURS: "24"
+    API_KEY_EXPIRATION_DAYS: "30"
+    
+    # Monitoring
+    PROMETHEUS_ENABLED: "true"
+  
+  # Secret environment variables
+  secretEnv:
+    POSTGRES_PASSWORD: ""
+    JWT_SECRET: ""
+    ADMIN_API_KEY: ""
+    SERVICE_API_KEY: ""
+    ENCRYPTION_KEY: ""
+  
+  # Configuration files
+  configFiles: {}
+  
+  # Persistence configuration
+  persistence:
+    enabled: false
+    size: 10Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+  
+  # Liveness and readiness probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: health
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 1
+    
+  startupProbe:
+    httpGet:
+      path: /health
+      port: health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 10
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+  global:
+    postgresql:
+      auth:
+        database: "constellation"
+        username: "constellation"
+        password: ""
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 1000m
+
+# Redis configuration
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+    password: ""
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 100m
+      limits:
+        memory: 512Mi
+        cpu: 500m
+
+# Iggy message broker configuration
+iggy:
+  enabled: true
+  image:
+    repository: iggyrs/iggy
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: 1000m
+  persistence:
+    enabled: true
+    size: 20Gi
+  config:
+    tcp:
+      enabled: true
+      port: 8090
+    http:
+      enabled: true
+      port: 3000
+    quic:
+      enabled: false
+      port: 8080
+
+# Prometheus monitoring
+prometheus:
+  enabled: true
+  server:
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    persistentVolume:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 1000m
+
+# Grafana dashboard
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: ""
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  dashboards:
+    default:
+      constellation-dashboard:
+        gnetId: 0
+        datasource: Prometheus
+
+# Network policies
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - port: 9090
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: iggy
+      ports:
+        - port: 8090
+          protocol: TCP
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Horizontal Pod Autoscaler
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

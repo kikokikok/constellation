@@ -1,0 +1,788 @@
+//! SWIM gossip protocol implementation
+
+use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tokio::sync::{Mutex, RwLock};
+use tokio::time;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
+
+use crate::models::message_broker::A2AMessage;
+use crate::communication::MessageBroker;
+
+use super::models::{
+    GossipConfig, GossipMessage, Membership, Node, NodeState, SerializationFormat, ServiceInfo,
+};
+
+/// SWIM gossip protocol implementation
+pub struct SwimGossipProtocol {
+    /// Protocol configuration
+    config: GossipConfig,
+    /// Local node information
+    local_node: Arc<RwLock<Node>>,
+    /// Membership information
+    membership: Arc<RwLock<Membership>>,
+    /// Known services
+    services: Arc<RwLock<HashMap<Uuid, ServiceInfo>>>,
+    /// Message broker for communication
+    message_broker: Arc<dyn MessageBroker + Send + Sync>,
+    /// Pending ping requests
+    pending_pings: Arc<Mutex<HashMap<u64, PingRequest>>>,
+    /// Protocol statistics
+    stats: Arc<Mutex<ProtocolStats>>,
+    /// Background task handles
+    background_tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
+/// Ping request tracking
+struct PingRequest {
+    /// Target node ID
+    target_id: Uuid,
+    /// Sequence number
+    sequence: u64,
+    /// Timestamp when ping was sent
+    sent_at: SystemTime,
+    /// Whether this is an indirect ping
+    indirect: bool,
+    /// Nodes asked for indirect ping (if indirect)
+    indirect_nodes: Vec<Uuid>,
+}
+
+/// Protocol statistics
+#[derive(Debug, Default)]
+struct ProtocolStats {
+    /// Total pings sent
+    pings_sent: u64,
+    /// Total pings received
+    pings_received: u64,
+    /// Total acks received
+    acks_received: u64,
+    /// Total ping timeouts
+    ping_timeouts: u64,
+    /// Total indirect pings sent
+    indirect_pings_sent: u64,
+    /// Total membership updates sent
+    membership_updates_sent: u64,
+    /// Total membership updates received
+    membership_updates_received: u64,
+    /// Total state syncs sent
+    state_syncs_sent: u64,
+    /// Total state syncs received
+    state_syncs_received: u64,
+    /// Total protocol errors
+    protocol_errors: u64,
+}
+
+impl SwimGossipProtocol {
+    /// Create a new SWIM gossip protocol instance
+    pub async fn new(
+        config: GossipConfig,
+        node_name: String,
+        node_address: SocketAddr,
+        message_broker: Arc<dyn MessageBroker + Send + Sync>,
+    ) -> anyhow::Result<Self> {
+        // Create local node
+        let local_node = Node::new(
+            node_name,
+            node_address,
+            serde_json::json!({}),
+            config.protocol_version.clone(),
+            vec![
+                config.serialization_format.clone(),
+                SerializationFormat::Json, // Always support JSON as fallback
+            ],
+        );
+
+        let membership = Membership::new(local_node.clone());
+
+        Ok(Self {
+            config,
+            local_node: Arc::new(RwLock::new(local_node)),
+            membership: Arc::new(RwLock::new(membership)),
+            services: Arc::new(RwLock::new(HashMap::new())),
+            message_broker,
+            pending_pings: Arc::new(Mutex::new(HashMap::new())),
+            stats: Arc::new(Mutex::new(ProtocolStats::default())),
+            background_tasks: Vec::new(),
+        })
+    }
+
+    /// Start the gossip protocol
+    pub async fn start(&mut self) -> anyhow::Result<()> {
+        info!("Starting SWIM gossip protocol");
+
+        // Start background tasks
+        self.start_background_tasks().await?;
+
+        info!("SWIM gossip protocol started successfully");
+        Ok(())
+    }
+
+    /// Stop the gossip protocol
+    pub async fn stop(&mut self) -> anyhow::Result<()> {
+        info!("Stopping SWIM gossip protocol");
+
+        // Cancel all background tasks
+        for task in self.background_tasks.drain(..) {
+            task.abort();
+            let _ = task.await;
+        }
+
+        info!("SWIM gossip protocol stopped");
+        Ok(())
+    }
+
+    /// Start background tasks
+    async fn start_background_tasks(&mut self) -> anyhow::Result<()> {
+        // For now, we'll run tasks synchronously when methods are called
+        // Background tasks can be implemented by the caller if needed
+        Ok(())
+    }
+
+    /// Run ping cycle (to be called periodically)
+    pub async fn run_ping_cycle(&self) -> anyhow::Result<()> {
+        // Get a random node to ping (excluding self)
+        let target_node = {
+            let membership_guard = self.membership.read().await;
+            let alive_nodes = membership_guard.alive_nodes();
+            
+            if alive_nodes.len() <= 1 {
+                return Ok(()); // No other nodes to ping
+            }
+            
+            // Choose a random node (simplified - always first non-local)
+            alive_nodes.iter()
+                .find(|n| n.id != membership_guard.local_node.id)
+                .map(|n| (*n).clone())
+        };
+
+        if let Some(target) = target_node {
+            // Create ping message
+            let ping = GossipMessage::Ping {
+                sender_id: self.local_node.read().await.id,
+                sequence: self.get_next_sequence().await,
+                timestamp: SystemTime::now(),
+            };
+
+            // Send ping
+            if let Err(e) = Self::send_gossip_message(
+                self.message_broker.clone(),
+                &target,
+                &ping,
+                &self.config,
+            ).await {
+                error!("Failed to send ping to {}: {}", target.id, e);
+                return Ok(());
+            }
+
+            // Track pending ping
+            let ping_request = PingRequest {
+                target_id: target.id,
+                sequence: ping.sequence,
+                sent_at: SystemTime::now(),
+                indirect: false,
+                indirect_nodes: Vec::new(),
+            };
+
+            self.pending_pings.lock().await.insert(ping.sequence, ping_request);
+            
+            // Update stats
+            self.stats.lock().await.pings_sent += 1;
+        }
+
+        Ok(())
+    }
+
+    /// Get next sequence number
+    async fn get_next_sequence(&self) -> u64 {
+        let mut stats = self.stats.lock().await;
+        stats.pings_sent += 1;
+        stats.pings_sent // Use ping count as sequence
+    }
+        let config = self.config.clone();
+        let local_node = self.local_node.clone();
+        let membership = self.membership.clone();
+        let message_broker = self.message_broker.clone();
+        let pending_pings = self.pending_pings.clone();
+        let stats = self.stats.clone();
+
+        tokio::spawn(async move {
+            let mut interval = time::interval(Duration::from_millis(config.ping_interval_ms));
+            let mut sequence = 0u64;
+
+            loop {
+                interval.tick().await;
+
+                // Get a random node to ping (excluding self)
+                let target_node = {
+                    let membership_guard = membership.read().await;
+                    let alive_nodes = membership_guard.alive_nodes();
+                    
+                    if alive_nodes.len() <= 1 {
+                        continue; // No other nodes to ping
+                    }
+                    
+                    // Choose a random node (simplified - always first non-local)
+                    alive_nodes.iter()
+                        .find(|n| n.id != membership_guard.local_node.id)
+                        .map(|n| (*n).clone())
+                };
+
+                if let Some(target) = target_node {
+                    sequence += 1;
+                    
+                    // Create ping message
+                    let ping = GossipMessage::Ping {
+                        sender_id: local_node.read().await.id,
+                        sequence,
+                        timestamp: SystemTime::now(),
+                    };
+
+                    // Send ping
+            if let Err(e) = Self::send_gossip_message(
+                self.message_broker.clone(),
+                &target,
+                &ping,
+                &self.config,
+            ).await {
+                        error!("Failed to send ping to {}: {}", target.id, e);
+                        continue;
+                    }
+
+                    // Track pending ping
+                    let ping_request = PingRequest {
+                        target_id: target.id,
+                        sequence,
+                        sent_at: SystemTime::now(),
+                        indirect: false,
+                        indirect_nodes: Vec::new(),
+                    };
+
+                    pending_pings.lock().await.insert(sequence, ping_request);
+                    
+                    // Update stats
+                    stats.lock().await.pings_sent += 1;
+                }
+            }
+        })
+    }
+
+    /// Run failure detection cycle (to be called periodically)
+    pub async fn run_failure_detection_cycle(&self) -> anyhow::Result<()> {
+        let now = SystemTime::now();
+        let mut pings_to_remove = Vec::new();
+        let mut nodes_to_mark_suspect = Vec::new();
+
+        // Check for timed out pings
+        {
+            let mut pending_pings_guard = self.pending_pings.lock().await;
+            
+            for (sequence, ping_request) in pending_pings_guard.iter() {
+                let elapsed = now.duration_since(ping_request.sent_at)
+                    .unwrap_or(Duration::from_secs(0));
+                
+                if elapsed > Duration::from_millis(self.config.ping_timeout_ms) {
+                    if ping_request.indirect {
+                        // Indirect ping also timed out - mark node as suspect
+                        nodes_to_mark_suspect.push(ping_request.target_id);
+                        pings_to_remove.push(*sequence);
+                    } else {
+                        // Direct ping timed out - try indirect ping
+                        // This would be implemented in a real SWIM protocol
+                        // For now, we'll mark as suspect
+                        nodes_to_mark_suspect.push(ping_request.target_id);
+                        pings_to_remove.push(*sequence);
+                    }
+                    
+                    self.stats.lock().await.ping_timeouts += 1;
+                }
+            }
+            
+            // Remove timed out pings
+            for sequence in pings_to_remove {
+                pending_pings_guard.remove(&sequence);
+            }
+        }
+
+        // Mark nodes as suspect
+        if !nodes_to_mark_suspect.is_empty() {
+            let mut membership_guard = self.membership.write().await;
+            
+            for node_id in nodes_to_mark_suspect {
+                if let Some(node) = membership_guard.get_node_mut(&node_id) {
+                    if node.is_alive() {
+                        node.mark_suspect();
+                        info!("Marked node {} as suspect", node_id);
+                    }
+                }
+            }
+        }
+
+        // Check for nodes that should be marked dead
+        {
+            let mut membership_guard = self.membership.write().await;
+            let now = SystemTime::now();
+            
+            for node in membership_guard.known_nodes.iter_mut() {
+                if node.is_suspect() {
+                    if let Some(suspect_since) = node.suspect_since {
+                        let elapsed = now.duration_since(suspect_since)
+                            .unwrap_or(Duration::from_secs(0));
+                        
+                        let suspicion_timeout = Duration::from_millis(
+                            self.config.ping_timeout_ms * self.config.suspicion_multiplier as u64
+                        );
+                        
+                        if elapsed > suspicion_timeout {
+                            node.mark_dead();
+                            info!("Marked node {} as dead (suspicion timeout)", node.id);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run gossip dissemination cycle (to be called periodically)
+    pub async fn run_gossip_cycle(&self) -> anyhow::Result<()> {
+        // Get random nodes to gossip to
+        let gossip_targets = {
+            let membership_guard = self.membership.read().await;
+            let alive_nodes = membership_guard.alive_nodes();
+            
+            if alive_nodes.len() <= 1 {
+                return Ok(()); // No other nodes to gossip to
+            }
+            
+            // Select random nodes (simplified - select up to gossip_fanout)
+            alive_nodes.iter()
+                .filter(|n| n.id != membership_guard.local_node.id)
+                .take(self.config.gossip_fanout)
+                .map(|n| (*n).clone())
+                .collect::<Vec<_>>()
+        };
+
+        if gossip_targets.is_empty() {
+            return Ok(());
+        }
+
+        // Create membership update
+        let membership_update = {
+            let membership_guard = self.membership.read().await;
+            GossipMessage::MembershipUpdate {
+                sender_id: self.local_node.read().await.id,
+                membership: membership_guard.clone(),
+                timestamp: SystemTime::now(),
+            }
+        };
+
+        // Send to gossip targets
+        for target in gossip_targets {
+            if let Err(e) = Self::send_gossip_message(
+                self.message_broker.clone(),
+                &target,
+                &membership_update,
+                &self.config.serialization_format,self.config,self.config,self.config,
+            ).await {
+                error!("Failed to send gossip to {}: {}", target.id, e);
+                continue;
+            }
+            
+            self.stats.lock().await.membership_updates_sent += 1;
+        }
+
+        Ok(())
+    }
+                    
+                    // Select random nodes (simplified - select up to gossip_fanout)
+                    alive_nodes.iter()
+                        .filter(|n| n.id != membership_guard.local_node.id)
+                        .take(config.gossip_fanout)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+
+                if gossip_targets.is_empty() {
+                    continue;
+                }
+
+                // Create membership update
+                let membership_update = {
+                    let membership_guard = membership.read().await;
+                    GossipMessage::MembershipUpdate {
+                        sender_id: local_node.read().await.id,
+                        membership: membership_guard.clone(),
+                        timestamp: SystemTime::now(),
+                    }
+                };
+
+                // Send to gossip targets
+                for target in gossip_targets {
+                    if let Err(e) = Self::send_gossip_message(
+                        message_broker.clone(),
+                        &target,
+                        &membership_update,
+                        &config,
+                    ).await {
+                        error!("Failed to send gossip to {}: {}", target.id, e);
+                        continue;
+                    }
+                    
+                    stats.lock().await.membership_updates_sent += 1;
+                }
+            }
+        })
+    }
+
+    /// Handle an incoming gossip message
+    pub async fn handle_message(&self, message: GossipMessage) -> anyhow::Result<()> {
+        match message {
+            GossipMessage::Ping { sender_id, sequence, timestamp } => {
+                self.handle_ping(sender_id, sequence, timestamp).await
+            }
+            GossipMessage::Ack { sender_id, ping_sequence, timestamp, membership_snapshot } => {
+                self.handle_ack(sender_id, ping_sequence, timestamp, membership_snapshot).await
+            }
+            GossipMessage::PingReq { sender_id, target_id, sequence, timestamp } => {
+                self.handle_ping_req(sender_id, target_id, sequence, timestamp).await
+            }
+            GossipMessage::MembershipUpdate { sender_id, membership, timestamp } => {
+                self.handle_membership_update(sender_id, membership, timestamp).await
+            }
+            GossipMessage::StateSync { sender_id, state_type, state_data, version, timestamp } => {
+                self.handle_state_sync(sender_id, state_type, state_data, version, timestamp).await
+            }
+        }
+    }
+
+    /// Handle a ping message
+    async fn handle_ping(&self, sender_id: Uuid, sequence: u64, timestamp: SystemTime) -> anyhow::Result<()> {
+        debug!("Received ping from {} (sequence: {})", sender_id, sequence);
+        
+        // Update stats
+        self.stats.lock().await.pings_received += 1;
+
+        // Get current membership snapshot
+        let membership_snapshot = {
+            let membership_guard = self.membership.read().await;
+            Some(membership_guard.clone())
+        };
+
+        // Create ack response
+        let ack = GossipMessage::Ack {
+            sender_id: self.local_node.read().await.id,
+            ping_sequence: sequence,
+            timestamp: SystemTime::now(),
+            membership_snapshot,
+        };
+
+        // Find sender node
+        let sender_node = {
+            let membership_guard = self.membership.read().await;
+            membership_guard.get_node(&sender_id).cloned()
+        };
+
+        if let Some(sender) = sender_node {
+            // Send ack
+            Self::send_gossip_message(
+                self.message_broker.clone(),
+                &sender,
+                &ack,
+                &self.config.serialization_format,self.config,self.config,self.config,
+            ).await?;
+            
+            // Update stats
+            self.stats.lock().await.acks_received += 1;
+        }
+
+        Ok(())
+    }
+
+    /// Handle an ack message
+    async fn handle_ack(
+        &self,
+        sender_id: Uuid,
+        ping_sequence: u64,
+        timestamp: SystemTime,
+        membership_snapshot: Option<Membership>,
+    ) -> anyhow::Result<()> {
+        debug!("Received ack from {} for ping {}", sender_id, ping_sequence);
+
+        // Remove pending ping
+        let mut pending_pings_guard = self.pending_pings.lock().await;
+        if let Some(ping_request) = pending_pings_guard.remove(&ping_sequence) {
+            // Update node as alive
+            let mut membership_guard = self.membership.write().await;
+            if let Some(node) = membership_guard.get_node_mut(&sender_id) {
+                node.mark_alive();
+            }
+        }
+
+        // Merge membership snapshot if provided
+        if let Some(snapshot) = membership_snapshot {
+            let mut membership_guard = self.membership.write().await;
+            membership_guard.merge(&snapshot);
+        }
+
+        Ok(())
+    }
+
+    /// Handle a ping request (indirect ping)
+    async fn handle_ping_req(
+        &self,
+        sender_id: Uuid,
+        target_id: Uuid,
+        sequence: u64,
+        timestamp: SystemTime,
+    ) -> anyhow::Result<()> {
+        debug!("Received ping request from {} for target {}", sender_id, target_id);
+
+        // Check if we're the target
+        if target_id == self.local_node.read().await.id {
+            // Send ack directly to sender
+            let ack = GossipMessage::Ack {
+                sender_id: self.local_node.read().await.id,
+                ping_sequence: sequence,
+                timestamp: SystemTime::now(),
+                membership_snapshot: None,
+            };
+
+            let sender_node = {
+                let membership_guard = self.membership.read().await;
+                membership_guard.get_node(&sender_id).cloned()
+            };
+
+            if let Some(sender) = sender_node {
+                Self::send_gossip_message(
+                    self.message_broker.clone(),
+                    &sender,
+                    &ack,
+                &self.config,
+                ).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle a membership update
+    async fn handle_membership_update(
+        &self,
+        sender_id: Uuid,
+        membership: Membership,
+        timestamp: SystemTime,
+    ) -> anyhow::Result<()> {
+        debug!("Received membership update from {}", sender_id);
+
+        // Update stats
+        self.stats.lock().await.membership_updates_received += 1;
+
+        // Merge membership information
+        let mut membership_guard = self.membership.write().await;
+        membership_guard.merge(&membership);
+
+        Ok(())
+    }
+
+    /// Handle a state synchronization message
+    async fn handle_state_sync(
+        &self,
+        sender_id: Uuid,
+        state_type: String,
+        state_data: serde_json::Value,
+        version: u64,
+        timestamp: SystemTime,
+    ) -> anyhow::Result<()> {
+        debug!("Received state sync from {}: {} v{}", sender_id, state_type, version);
+
+        // Update stats
+        self.stats.lock().await.state_syncs_received += 1;
+
+        // Handle different state types
+        match state_type.as_str() {
+            "services" => {
+                // Update services
+                if let Ok(services) = serde_json::from_value::<Vec<ServiceInfo>>(state_data) {
+                    let mut services_guard = self.services.write().await;
+                    for service in services {
+                        services_guard.insert(service.id, service);
+                    }
+                }
+            }
+            _ => {
+                warn!("Unknown state type: {}", state_type);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Negotiate serialization format with target node
+    fn negotiate_format(
+        config: &GossipConfig,
+        target: &Node,
+    ) -> SerializationFormat {
+        if !config.enable_protocol_negotiation {
+            return config.serialization_format.clone();
+        }
+        
+        // Check if target supports our preferred format
+        if target.supported_formats.contains(&config.serialization_format) {
+            return config.serialization_format.clone();
+        }
+        
+        // Try fallback formats
+        for format in &config.fallback_formats {
+            if target.supported_formats.contains(format) {
+                return format.clone();
+            }
+        }
+        
+        // Default to JSON (should always be supported)
+        SerializationFormat::Json
+    }
+
+    /// Send a gossip message
+    async fn send_gossip_message(
+        message_broker: Arc<dyn MessageBroker + Send + Sync>,
+        target: &Node,
+        message: &GossipMessage,
+        config: &GossipConfig,
+    ) -> anyhow::Result<()> {
+        // Negotiate format
+        let format = Self::negotiate_format(config, target);
+        // Serialize message
+        let payload = match format {
+            SerializationFormat::Json => serde_json::to_string(message)?,
+            SerializationFormat::Toon => {
+                // Convert to serde_json::Value first, then encode to TOON
+                let json_value = serde_json::to_value(message)?;
+                toon::encode(&json_value, None)
+            }
+            SerializationFormat::Protobuf => {
+                // TODO: Implement Protobuf serialization
+                warn!("Protobuf serialization not yet implemented, falling back to JSON");
+                serde_json::to_string(message)?
+            }
+            SerializationFormat::MessagePack => {
+                // Serialize to MessagePack binary format
+                let mut buf = Vec::new();
+                rmp_serde::encode::write(&mut buf, message)
+                    .map_err(|e| anyhow::anyhow!("MessagePack serialization failed: {}", e))?;
+                // Convert to base64 string for transport
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(&buf)
+            }
+        };
+
+        // Create A2A message
+        let mut a2a_message = A2AMessage::new(
+            Uuid::new_v4().to_string(),
+            "gossip".to_string(), // Sender ID will be set by the broker
+            target.id.to_string(),
+            "gossip".to_string(),
+            payload,
+        );
+        a2a_message.content_type = format.content_type().to_string();
+
+        // Send message
+        message_broker.send_message(a2a_message.to_message()).await?;
+
+        Ok(())
+    }
+
+    /// Get protocol statistics
+    pub async fn get_stats(&self) -> ProtocolStats {
+        self.stats.lock().await.clone()
+    }
+
+    /// Get current membership
+    pub async fn get_membership(&self) -> Membership {
+        self.membership.read().await.clone()
+    }
+
+    /// Get known services
+    pub async fn get_services(&self) -> Vec<ServiceInfo> {
+        let services_guard = self.services.read().await;
+        services_guard.values().cloned().collect()
+    }
+
+    /// Register a service
+    pub async fn register_service(&self, service: ServiceInfo) -> anyhow::Result<()> {
+        let mut services_guard = self.services.write().await;
+        services_guard.insert(service.id, service);
+        
+        // Broadcast service update
+        self.broadcast_service_update().await?;
+        
+        Ok(())
+    }
+
+    /// Unregister a service
+    pub async fn unregister_service(&self, service_id: Uuid) -> anyhow::Result<()> {
+        let mut services_guard = self.services.write().await;
+        services_guard.remove(&service_id);
+        
+        // Broadcast service update
+        self.broadcast_service_update().await?;
+        
+        Ok(())
+    }
+
+    /// Broadcast service update to cluster
+    async fn broadcast_service_update(&self) -> anyhow::Result<()> {
+        let services = self.get_services().await;
+        
+        let state_sync = GossipMessage::StateSync {
+            sender_id: self.local_node.read().await.id,
+            state_type: "services".to_string(),
+            state_data: serde_json::to_value(services)?,
+            version: 1,
+            timestamp: SystemTime::now(),
+        };
+
+        // Get all alive nodes
+        let membership_guard = self.membership.read().await;
+        let targets: Vec<Node> = membership_guard.alive_nodes()
+            .iter()
+            .filter(|n| n.id != membership_guard.local_node.id)
+            .map(|n| (*n).clone())
+            .collect();
+        drop(membership_guard); // Explicitly drop the guard
+
+        // Send to all targets
+        for target in targets {
+            if let Err(e) = Self::send_gossip_message(
+                self.message_broker.clone(),
+                &target,
+                &state_sync,
+                &self.config.serialization_format,self.config,self.config,self.config,
+            ).await {
+                error!("Failed to broadcast service update to {}: {}", target.id, e);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Clone for ProtocolStats {
+    fn clone(&self) -> Self {
+        Self {
+            pings_sent: self.pings_sent,
+            pings_received: self.pings_received,
+            acks_received: self.acks_received,
+            ping_timeouts: self.ping_timeouts,
+            indirect_pings_sent: self.indirect_pings_sent,
+            membership_updates_sent: self.membership_updates_sent,
+            membership_updates_received: self.membership_updates_received,
+            state_syncs_sent: self.state_syncs_sent,
+            state_syncs_received: self.state_syncs_received,
+            protocol_errors: self.protocol_errors,
+        }
+    }
+}

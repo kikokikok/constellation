@@ -1,0 +1,43 @@
+# Prometheus configuration for Constellation monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Iggy server metrics
+  - job_name: 'iggy'
+    static_configs:
+      - targets: ['iggy-server:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Constellation application metrics (if exposed)
+  - job_name: 'constellation'
+    static_configs:
+      - targets: ['constellation-app:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Node exporter (if running on host)
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']

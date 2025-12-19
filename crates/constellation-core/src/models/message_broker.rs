@@ -433,6 +433,42 @@ impl A2AMessage {
         .with_ttl(self.ttl_seconds.unwrap_or(0))
         .with_metadata(self.metadata.clone().unwrap_or(serde_json::json!({})))
     }
+
+    /// Set correlation ID
+    pub fn with_correlation_id(mut self, correlation_id: Option<String>) -> Self {
+        self.correlation_id = correlation_id;
+        self
+    }
+
+    /// Set conversation ID
+    pub fn with_conversation_id(mut self, conversation_id: Option<String>) -> Self {
+        self.conversation_id = conversation_id;
+        self
+    }
+
+    /// Set priority
+    pub fn with_priority(mut self, priority: MessagePriority) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Set TTL
+    pub fn with_ttl(mut self, ttl_seconds: Option<i32>) -> Self {
+        self.ttl_seconds = ttl_seconds;
+        self
+    }
+
+    /// Set metadata
+    pub fn with_metadata(mut self, metadata: Option<serde_json::Value>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    /// Set delivery guarantee
+    pub fn with_delivery_guarantee(mut self, delivery_guarantee: String) -> Self {
+        self.delivery_guarantee = delivery_guarantee;
+        self
+    }
 }
 
 /// Message acknowledgment
@@ -512,6 +548,9 @@ pub enum MessageBrokerError {
 
     #[error("Rate limit exceeded: {0}")]
     RateLimitExceeded(String),
+
+    #[error("Validation error: {0}")]
+    ValidationError(String),
 }
 
 /// Result type for message broker operations

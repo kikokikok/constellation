@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: constellation
+  namespace: constellation
+  labels:
+    app: constellation
+    component: message-broker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: constellation
+  template:
+    metadata:
+      labels:
+        app: constellation
+        component: message-broker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: constellation
+        image: constellation:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http-api
+        - containerPort: 9090
+          name: metrics
+        - containerPort: 8081
+          name: health
+        env:
+        - name: RUST_LOG
+          valueFrom:
+            configMapKeyRef:
+              name: constellation-config
+              key: RUST_LOG
+        - name: DATABASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: constellation-config
+              key: DATABASE_URL
+        - name: MESSAGE_BROKER_TYPE
+          valueFrom:
+            configMapKeyRef:
+              name: constellation-config
+              key: MESSAGE_BROKER_TYPE
+        - name: IGGY_SERVER_URL
+          valueFrom:
+            configMapKeyRef:
+              name: constellation-config
+              key: IGGY_SERVER_URL
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: constellation-secrets
+              key: JWT_SECRET
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: constellation-secrets
+              key: POSTGRES_PASSWORD
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true

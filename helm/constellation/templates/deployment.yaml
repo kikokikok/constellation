@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "constellation.fullname" . }}
+  labels:
+    {{- include "constellation.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "constellation.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "constellation.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "constellation.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.constellation.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.constellation.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.env.RUST_LOG | default "info" }}
+            - name: IGGY_SERVER_ADDRESS
+              value: {{ printf "%s-iggy:8090" (include "constellation.fullname" .) }}
+            - name: IGGY_USERNAME
+              value: "guest"
+            - name: IGGY_PASSWORD
+              value: "guest"
+            - name: MESSAGE_BROKER_TYPE
+              value: {{ .Values.constellation.env.MESSAGE_BROKER_TYPE | default "iggy" }}
+            {{- with .Values.constellation.env }}
+            {{- range $key, $value := . }}
+            {{- if not (or (eq $key "RUST_LOG") (eq $key "MESSAGE_BROKER_TYPE")) }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.constellation.secretEnv }}
+            {{- range $key, $value := . }}
+            {{- if $value }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "constellation.fullname" $ }}
+                  key: {{ $key | lower }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.constellation.resources | nindent 12 }}
+          {{- with .Values.constellation.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.constellation.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.constellation.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/constellation
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/constellation
+            - name: data
+              mountPath: /var/lib/constellation
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "constellation.fullname" . }}-config
+        - name: logs
+          emptyDir: {}
+        - name: data
+        {{- if .Values.constellation.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "constellation.fullname" . }}-pvc
+        {{- else }}
+          emptyDir: {}
+        {{- end }}
+      {{- with .Values.constellation.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.constellation.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.constellation.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

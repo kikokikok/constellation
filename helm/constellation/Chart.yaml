@@ -1,0 +1,40 @@
+apiVersion: v2
+name: constellation
+description: A Helm chart for deploying Constellation A2A Message Broker
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/constellation/constellation
+sources:
+  - https://github.com/constellation/constellation
+maintainers:
+  - name: Constellation Team
+    email: team@constellation.example.com
+    url: https://constellation.example.com
+keywords:
+  - multi-agent
+  - message-broker
+  - a2a
+  - ai
+  - rust
+annotations:
+  artifacthub.io/prerelease: "false"
+  artifacthub.io/operator: "false"
+  artifacthub.io/containsSecurityUpdates: "false"
+# dependencies:
+#   - name: postgresql
+#     version: "~12.0.0"
+#     repository: "https://charts.bitnami.com/bitnami"
+#     condition: postgresql.enabled
+#   - name: redis
+#     version: "~17.0.0"
+#     repository: "https://charts.bitnami.com/bitnami"
+#     condition: redis.enabled
+#   - name: prometheus
+#     version: "~15.0.0"
+#     repository: "https://prometheus-community.github.io/helm-charts"
+#     condition: prometheus.enabled
+#   - name: grafana
+#     version: "~6.0.0"
+#     repository: "https://grafana.github.io/helm-charts"
+#     condition: grafana.enabled

@@ -1,15 +1,97 @@
-# Constellation Security Audit Report
+# Constellation Security Hardening Guide & Audit Report
 
-**Project:** Constellation - AI Agent Platform  
-**Audit Date:** December 14, 2025  
-**Audit Version:** 1.0.0  
-**Audit Scope:** MCP Security Framework & Integration Layer
+## Executive Summary
+
+This document provides comprehensive security hardening guidelines and audit findings for the Constellation A2A Message Broker. The system implements agent-to-agent communication with MCP crypto integration, JWT authentication, and distributed tracing.
+
+### Overall Security Rating: **SECURE** ✅
+**Audit Date:** December 19, 2025  
+**Audit Version:** 2.0.0  
+**Audit Scope:** Complete A2A Message Broker Security Assessment
 
 ## Executive Summary
 
 The Constellation platform implements a comprehensive security framework through its Model Context Protocol (MCP) module. This audit evaluates the cryptographic security, key management, and integration security of the platform. The implementation demonstrates strong security practices with proper encryption, signing, and key management.
 
 ### Overall Security Rating: **SECURE** ✅
+
+## Security Architecture Overview
+
+### Defense-in-Depth Layers
+
+```
+┌─────────────────────────────────┐
+│   Layer 7: Application Security │
+│   • Input validation            │
+│   • Authentication/Authorization│
+│   • Rate limiting               │
+│   • Audit logging               │
+├─────────────────────────────────┤
+│   Layer 6: Data Security        │
+│   • Encryption at rest          │
+│   • Encryption in transit       │
+│   • Data masking                │
+│   • Secure key management       │
+├─────────────────────────────────┤
+│   Layer 5: Platform Security    │
+│   • Container security          │
+│   • Kubernetes security         │
+│   • Network policies            │
+│   • Pod security standards      │
+├─────────────────────────────────┤
+│   Layer 4: Infrastructure       │
+│   • Network segmentation        │
+│   • Firewall rules              │
+│   • DDoS protection             │
+│   • WAF configuration           │
+└─────────────────────────────────┘
+```
+
+## Security Audit Findings
+
+### ✅ **PASSED** - Critical Security Controls
+
+1. **Authentication & Authorization**
+   - JWT tokens with Ed25519 signatures
+   - API key authentication for services
+   - Role-based access control foundation
+   - Token expiration and revocation
+
+2. **Cryptography**
+   - MCP crypto integration for key management
+   - Ed25519 for digital signatures
+   - X25519 for key exchange
+   - Secure random number generation
+
+3. **Input Validation**
+   - A2A protocol validation (v1.0, v1.1, v2.0)
+   - Schema validation for all messages
+   - Header preservation and validation
+   - Priority and TTL bounds checking
+
+4. **Secure Development**
+   - Memory-safe language (Rust)
+   - No unsafe code blocks in core modules
+   - Dependency scanning (cargo-audit)
+   - Regular security updates
+
+### ⚠️ **REQUIRES ATTENTION** - Medium Priority
+
+1. **Secret Management**
+   - Current: Environment variables in Kubernetes secrets
+   - Recommended: HashiCorp Vault or AWS Secrets Manager integration
+
+2. **Network Security**
+   - Current: Basic Kubernetes network policies
+   - Recommended: Service mesh (Istio/Linkerd) with mTLS
+
+3. **Audit Logging**
+   - Current: Structured logging with tracing
+   - Recommended: Centralized audit log with SIEM integration
+
+4. **Compliance**
+   - Current: Basic security controls
+   - Recommended: SOC 2, ISO 27001 compliance framework
 
 ## 1. Cryptographic Security Assessment
 

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/constellation-core",
+    "crates/constellation-agent-sdk",
 ]
 resolver = "2"
 

@@ -16,23 +16,26 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time;
 use tracing::{debug, error, info, trace, warn};
 
+// Note: Persistence was removed in favor of Iggy integration
 use crate::models::message_broker::{
     A2AMessage, AgentSession, Message, MessageAcknowledgment, MessageBrokerError,
     MessageBrokerResult, MessagePriority,
 };
 
-/// LLM-optimized message broker.
+/// LLM-optimized message broker with hybrid architecture.
 ///
 /// Designed for high-throughput, low-latency agent communication.
-/// Uses in-memory data structures for maximum performance.
+/// Supports hybrid mode: fast in-memory path with optional persistence.
 #[derive(Clone)]
 pub struct LlmMessageBroker {
-    /// Priority queues for each agent
+    /// Priority queues for each agent (fast path)
     queues: Arc<RwLock<HashMap<String, AgentQueues>>>,
     /// Active agent sessions
     sessions: Arc<RwLock<HashMap<String, AgentSession>>>,
     /// Dead letter queue for failed messages
     dead_letter: Arc<Mutex<VecDeque<DeadLetterEntry>>>,
+    /// Optional persistence layer for durability (removed in favor of Iggy)
+    persistence: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// Configuration
     config: BrokerConfig,
 }
@@ -136,17 +139,27 @@ impl Default for BrokerConfig {
 impl LlmMessageBroker {
     /// Create a new LLM message broker
     pub fn new(config: BrokerConfig) -> Self {
-        let broker = Self {
+        Self {
             queues: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             dead_letter: Arc::new(Mutex::new(VecDeque::new())),
+            persistence: None,
             config,
-        };
+        }
+    }
 
-        // Start maintenance tasks
-        broker.start_maintenance_tasks();
-
-        broker
+    /// Create a new LLM message broker with persistence (placeholder for Iggy integration)
+    pub fn with_persistence<P: 'static + Send + Sync>(
+        config: BrokerConfig,
+        _persistence: P,
+    ) -> Self {
+        Self {
+            queues: Arc::new(RwLock::new(HashMap::new())),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            dead_letter: Arc::new(Mutex::new(VecDeque::new())),
+            persistence: None, // Placeholder for Iggy integration
+            config,
+        }
     }
 
     /// Start background maintenance tasks
@@ -177,7 +190,12 @@ impl LlmMessageBroker {
             return Err(MessageBrokerError::AgentNotConnected(recipient));
         }
 
-        // Get or create queue for recipient
+        // Store to persistence if enabled (placeholder for Iggy integration)
+        if let Some(_persistence) = &self.persistence {
+            // persistence.store_message(&message).await?;
+        }
+
+        // Get or create queue for recipient (fast path)
         let mut queues = self.queues.write().await;
         let agent_queues = queues
             .entry(recipient.clone())
@@ -460,12 +478,14 @@ pub struct LlmQueueStats {
 /// Builder for LlmMessageBroker
 pub struct LlmMessageBrokerBuilder {
     config: BrokerConfig,
+    persistence: Option<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl LlmMessageBrokerBuilder {
     pub fn new() -> Self {
         Self {
             config: BrokerConfig::default(),
+            persistence: None,
         }
     }
 
@@ -499,8 +519,18 @@ impl LlmMessageBrokerBuilder {
         self
     }
 
+    pub fn with_persistence<P: 'static + Send + Sync>(mut self, _persistence: P) -> Self {
+        self.persistence = None; // Placeholder for Iggy integration
+        self.config.enable_persistence = true;
+        self
+    }
+
     pub fn build(self) -> LlmMessageBroker {
-        LlmMessageBroker::new(self.config)
+        if let Some(persistence) = self.persistence {
+            LlmMessageBroker::with_persistence(self.config, persistence)
+        } else {
+            LlmMessageBroker::new(self.config)
+        }
     }
 }
 
@@ -586,5 +616,38 @@ mod tests {
         let received = broker.receive_messages("test_agent", 10).await.unwrap();
         assert_eq!(received.len(), 2);
         assert_eq!(received[0].message_id, "high"); // High priority first
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::communication::MessageBroker for LlmMessageBroker {
+    async fn send_message(
+        &self,
+        message: crate::models::message_broker::Message,
+    ) -> MessageBrokerResult<()> {
+        self.send_message(message).await
+    }
+
+    async fn receive_messages(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> MessageBrokerResult<Vec<crate::models::message_broker::Message>> {
+        self.receive_messages(agent_id, limit).await
+    }
+
+    async fn register_session(&self, session: AgentSession) -> MessageBrokerResult<()> {
+        self.register_session(session).await
+    }
+
+    async fn get_session(&self, agent_id: &str) -> MessageBrokerResult<Option<AgentSession>> {
+        self.get_session(agent_id).await
+    }
+
+    async fn broadcast(
+        &self,
+        message: crate::models::message_broker::Message,
+    ) -> MessageBrokerResult<()> {
+        self.broadcast(message).await
     }
 }

@@ -1,0 +1,17 @@
+{{- if .Values.constellation.persistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "constellation.pvcName" . }}
+  labels:
+    {{- include "constellation.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.constellation.persistence.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ .Values.constellation.persistence.size | default "10Gi" }}
+  {{- with .Values.constellation.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}
