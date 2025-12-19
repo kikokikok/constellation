@@ -16,6 +16,7 @@ pub mod gossip;
 pub mod hybrid;
 pub mod integration;
 pub mod mcp;
+pub mod memory;
 pub mod message_broker;
 pub mod tracing;
 

@@ -751,6 +751,21 @@ impl KeyStore {
         self.key_metadata.get(key_id)
     }
 
+    /// Remove a private key.
+    pub fn remove_private_key(&mut self, key_id: &str) -> Option<PrivateKey> {
+        self.private_keys.remove(key_id)
+    }
+
+    /// Remove a public key.
+    pub fn remove_public_key(&mut self, key_id: &str) -> Option<McpPublicKey> {
+        self.public_keys.remove(key_id)
+    }
+
+    /// Remove key metadata.
+    pub fn remove_metadata(&mut self, key_id: &str) -> Option<KeyMetadata> {
+        self.key_metadata.remove(key_id)
+    }
+
     /// Validate a key (check if active and not expired).
     pub fn validate_key(&self, key_id: &str) -> Result<(), CryptoError> {
         if let Some(metadata) = self.key_metadata.get(key_id) {

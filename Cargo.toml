@@ -2,6 +2,7 @@
 members = [
     "crates/constellation-core",
     "crates/constellation-agent-sdk",
+    "crates/constellation-agent-harness",
 ]
 resolver = "2"
 
